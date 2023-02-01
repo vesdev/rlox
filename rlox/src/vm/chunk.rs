@@ -1,4 +1,4 @@
-use std::{fmt::Write, ops::Index};
+use std::{fmt::Write};
 
 use crate::vm::{opcode::OpCode, value::Value};
 

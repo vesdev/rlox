@@ -4,7 +4,6 @@ pub mod compiler;
 pub mod error;
 pub mod vm;
 
-use compiler::*;
 use error::*;
 use vm::{chunk::Chunk, Vm};
 

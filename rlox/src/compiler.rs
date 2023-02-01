@@ -14,7 +14,7 @@ pub struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    pub fn compile(&mut self, chunk: &mut Chunk) -> Result<()> {
+    pub fn compile(&mut self, _chunk: &mut Chunk) -> Result<()> {
         self.panic_mode = false;
         self.advance();
         self.expression();
@@ -68,7 +68,7 @@ impl<'a> Compiler<'a> {
         self.error_at_current(message)
     }
 
-    fn emit_byte(byte: u8) {}
+    fn emit_byte(_byte: u8) {}
 
     fn error_at_current(&mut self, message: String) -> Result<()> {
         self.error_at(self.current, message)

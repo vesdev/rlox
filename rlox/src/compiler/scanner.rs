@@ -1,4 +1,4 @@
-use std::str::Chars;
+
 
 pub struct Scanner<'a> {
     source: &'a str,
@@ -102,7 +102,7 @@ impl<'a> Scanner<'a> {
         Token::new(kind, &self.source[self.start..self.current], self.line)
     }
 
-    fn error_token(&mut self, message: &'a str) -> Token<'a> {
+    fn error_token(&mut self, _message: &'a str) -> Token<'a> {
         Token::new(
             TokenKind::Error,
             &self.source[self.start..self.current],
