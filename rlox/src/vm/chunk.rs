@@ -1,6 +1,6 @@
 use std::{fmt::Write, ops::Index};
 
-use crate::{opcode::OpCode, value::Value};
+use crate::vm::{opcode::OpCode, value::Value};
 
 pub struct Chunk {
     code: Vec<u8>,
@@ -46,12 +46,14 @@ pub fn disassemble_chunk(
     chunk: &Chunk,
     name: &str,
 ) -> Result<String, std::fmt::Error> {
-    writeln!(out, "== {} ==\n", name)?;
+    writeln!(out, "\t>--\t>{}<", name.to_uppercase())?;
 
     let mut offset = 0;
     while offset < chunk.code.len() {
         offset += disassemble_instruction(&mut out, chunk, offset)?;
     }
+
+    writeln!(out, "\t>--")?;
 
     Ok(out)
 }
@@ -64,15 +66,18 @@ pub fn disassemble_instruction(
     let op = OpCode::decode_unchecked(chunk.code[offset]);
 
     if offset > 0 && chunk.lines[offset] == chunk.lines[offset - 1] {
-        write!(out, " |  ")?;
+        write!(out, "\t|\t")?;
     } else {
-        write!(out, "[{}] ", chunk.lines[offset])?;
+        write!(out, "{}\t|\t", chunk.lines[offset])?;
     }
 
     write!(out, "{:04} {}", offset, op)?;
     let operands = match op {
         OpCode::Constant => &chunk.constants[chunk.code[offset + 1] as usize],
-        _ => return Ok(offset + 1),
+        _ => {
+            writeln!(out)?;
+            return Ok(1);
+        }
     };
 
     writeln!(out, "\t{}", operands)?;

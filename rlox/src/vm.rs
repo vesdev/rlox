@@ -1,14 +1,14 @@
-use crate::{
+pub mod chunk;
+mod opcode;
+mod value;
+
+use crate::error::*;
+
+use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
     opcode::OpCode,
     value::Value,
 };
-
-#[derive(Debug)]
-pub enum Error {
-    Compile(String),
-    Runtime(String),
-}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -32,14 +32,15 @@ impl Vm {
     fn run(&mut self, chunk: &Chunk) -> Result<()> {
         loop {
             if cfg!(debug_trace_execution) {
-                print!("stack <");
+                print!("\t|\t\t\t");
                 for value in &self.stack {
-                    print!(" {},", value);
+                    print!("| {} ", value);
                 }
-                println!(">");
+                println!("|");
+
                 let mut out = String::new();
                 disassemble_instruction(&mut out, chunk, self.ip).unwrap();
-                println!("{}", out);
+                print!("{}", out);
             }
 
             let instruction: OpCode = OpCode::decode_unchecked(self.read_byte(chunk));
@@ -73,13 +74,12 @@ impl Vm {
                     self.stack.push(val);
                 }
                 OpCode::Return => {
-                    println!("({})", self.stack.pop().unwrap());
+                    println!("\n({})", self.stack.pop().unwrap());
                     return Ok(());
                 }
-                _ => return Err(Error::Runtime("unknown opcode".to_string())),
+                _ => return Err(Error::Interpret("unknown opcode".to_string())),
             }
         }
-        Ok(())
     }
 
     #[inline]
@@ -91,5 +91,42 @@ impl Vm {
     #[inline]
     fn read_constant(&mut self, chunk: &Chunk) -> Value {
         chunk.get_constant(self.read_byte(chunk) as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::vm::{chunk::Chunk, opcode::OpCode};
+
+    use super::*;
+
+    #[test]
+    fn expression() {
+        let mut chunk = Chunk::new();
+
+        chunk.push_byte(OpCode::Constant as u8, 123);
+        let constant = chunk.push_constant(value::Value::Number(1.2));
+        chunk.push_byte(constant, 123);
+
+        chunk.push_byte(OpCode::Constant as u8, 123);
+        let constant = chunk.push_constant(value::Value::Number(3.4));
+        chunk.push_byte(constant, 123);
+
+        chunk.push_byte(OpCode::Add as u8, 123);
+
+        chunk.push_byte(OpCode::Constant as u8, 123);
+        let constant = chunk.push_constant(value::Value::Number(5.6));
+        chunk.push_byte(constant, 123);
+
+        chunk.push_byte(OpCode::Divide as u8, 123);
+        chunk.push_byte(OpCode::Negate as u8, 123);
+
+        chunk.push_byte(OpCode::Return as u8, 123);
+
+        println!("{}", chunk.disassemble("code").unwrap());
+
+        println!("\t\t-- trace --\n");
+
+        Vm::new().interpret(chunk).unwrap();
     }
 }

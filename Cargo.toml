@@ -1,2 +1,2 @@
 [workspace]
-members = ["rlox-vm"]
+members = ["rlox", "cli"]
