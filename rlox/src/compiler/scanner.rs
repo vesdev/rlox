@@ -1,5 +1,3 @@
-
-
 pub struct Scanner<'a> {
     source: &'a str,
     start: usize,
@@ -8,9 +6,9 @@ pub struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    pub fn new() -> Self {
+    pub fn new(source: &'a str) -> Self {
         Self {
-            source: "",
+            source,
             start: 0,
             current: 0,
             line: 1,
@@ -147,11 +145,11 @@ impl<'a> Scanner<'a> {
     }
 
     fn number(&mut self) -> Token<'a> {
-        while self.peek().is_digit(10) {
+        while !self.is_at_end() && self.peek().is_digit(10) {
             self.advance();
         }
 
-        if self.peek() == '.' && self.peek_next().is_digit(10) {
+        if !self.is_at_end() && self.peek() == '.' && self.peek_next().is_digit(10) {
             self.advance();
 
             while self.peek().is_digit(10) {

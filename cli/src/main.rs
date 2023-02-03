@@ -13,11 +13,11 @@ struct Cli {
 fn repl() {
     let stdin = std::io::stdin();
     loop {
-        print!("> ");
-
         let mut line = String::new();
         stdin.lock().read_line(&mut line).unwrap();
-        rlox::run(line.as_str());
+        let expr = line.as_str();
+        println!("> {}", expr);
+        rlox::run(expr);
     }
 }
 

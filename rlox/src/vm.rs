@@ -1,6 +1,6 @@
 pub mod chunk;
-mod opcode;
-mod value;
+pub mod opcode;
+pub mod value;
 
 use crate::error::*;
 
@@ -25,11 +25,11 @@ impl Vm {
         }
     }
 
-    pub fn interpret(&mut self, chunk: Chunk) -> Result<()> {
-        self.run(&chunk)
+    pub fn interpret(&mut self, chunk: &Chunk) -> Result<Value> {
+        self.run(chunk)
     }
 
-    fn run(&mut self, chunk: &Chunk) -> Result<()> {
+    fn run(&mut self, chunk: &Chunk) -> Result<Value> {
         loop {
             if cfg!(debug_trace_execution) {
                 print!("\t|\t\t\t");
@@ -74,8 +74,7 @@ impl Vm {
                     self.stack.push(val);
                 }
                 OpCode::Return => {
-                    println!("\n({})", self.stack.pop().unwrap());
-                    return Ok(());
+                    return Ok(self.stack.pop().unwrap());
                 }
                 _ => return Err(Error::Interpret("unknown opcode".to_string())),
             }
@@ -91,42 +90,5 @@ impl Vm {
     #[inline]
     fn read_constant(&mut self, chunk: &Chunk) -> Value {
         chunk.get_constant(self.read_byte(chunk) as usize)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::vm::{chunk::Chunk, opcode::OpCode};
-
-    use super::*;
-
-    #[test]
-    fn expression() {
-        let mut chunk = Chunk::new();
-
-        chunk.push_byte(OpCode::Constant as u8, 123);
-        let constant = chunk.push_constant(value::Value::Number(1.2));
-        chunk.push_byte(constant, 123);
-
-        chunk.push_byte(OpCode::Constant as u8, 123);
-        let constant = chunk.push_constant(value::Value::Number(3.4));
-        chunk.push_byte(constant, 123);
-
-        chunk.push_byte(OpCode::Add as u8, 123);
-
-        chunk.push_byte(OpCode::Constant as u8, 123);
-        let constant = chunk.push_constant(value::Value::Number(5.6));
-        chunk.push_byte(constant, 123);
-
-        chunk.push_byte(OpCode::Divide as u8, 123);
-        chunk.push_byte(OpCode::Negate as u8, 123);
-
-        chunk.push_byte(OpCode::Return as u8, 123);
-
-        println!("{}", chunk.disassemble("code").unwrap());
-
-        println!("\t\t-- trace --\n");
-
-        Vm::new().interpret(chunk).unwrap();
     }
 }
