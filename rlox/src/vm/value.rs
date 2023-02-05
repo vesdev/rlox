@@ -1,11 +1,13 @@
 use std::{
     fmt::Display,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, Div, Mul, Neg, Not, Sub},
 };
 
 #[derive(Clone, Debug)]
 pub enum Value {
     Number(f64),
+    Nil,
+    Bool(bool),
 }
 
 impl Display for Value {
@@ -14,7 +16,9 @@ impl Display for Value {
             f,
             "{}",
             match self {
-                Value::Number(v) => v,
+                Value::Number(v) => v.to_string(),
+                Value::Nil => "Nil".to_string(),
+                Value::Bool(v) => v.to_string(),
             }
         )
     }
@@ -26,6 +30,7 @@ impl Neg for Value {
     fn neg(self) -> Self::Output {
         match self {
             Self::Number(v) => Self::Number(-v),
+            _ => Self::Nil,
         }
     }
 }
@@ -37,7 +42,9 @@ impl Add for Value {
         match self {
             Self::Number(a) => match rhs {
                 Self::Number(b) => Self::Number(a + b),
+                _ => Self::Nil,
             },
+            _ => Self::Nil,
         }
     }
 }
@@ -49,7 +56,9 @@ impl Sub for Value {
         match self {
             Self::Number(a) => match rhs {
                 Self::Number(b) => Self::Number(a - b),
+                _ => Self::Nil,
             },
+            _ => Self::Nil,
         }
     }
 }
@@ -61,7 +70,9 @@ impl Mul for Value {
         match self {
             Self::Number(a) => match rhs {
                 Self::Number(b) => Self::Number(a * b),
+                _ => Self::Nil,
             },
+            _ => Self::Nil,
         }
     }
 }
@@ -73,7 +84,41 @@ impl Div for Value {
         match self {
             Self::Number(a) => match rhs {
                 Self::Number(b) => Self::Number(a / b),
+                _ => Self::Nil,
             },
+            _ => Self::Nil,
+        }
+    }
+}
+
+impl Not for Value {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Self::Bool(a) => Self::Bool(!a),
+            Self::Nil => Self::Bool(true),
+            _ => Self::Bool(false),
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(l0), Self::Number(r0)) => l0 == r0,
+            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Number(l0), Self::Number(r0)) => l0.partial_cmp(r0),
+            (Self::Bool(l0), Self::Bool(r0)) => l0.partial_cmp(r0),
+            _ => None,
         }
     }
 }

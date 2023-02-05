@@ -49,6 +49,24 @@ impl Vm {
                     let constant = self.read_constant(chunk);
                     self.stack.push(constant);
                 }
+                OpCode::Nil => self.stack.push(Value::Nil),
+                OpCode::True => self.stack.push(Value::Bool(true)),
+                OpCode::False => self.stack.push(Value::Bool(false)),
+                OpCode::Equal => {
+                    let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
+                    self.stack.push(Value::Bool(a == b));
+                }
+                OpCode::Greater => {
+                    let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
+                    self.stack.push(Value::Bool(a > b));
+                }
+                OpCode::Less => {
+                    let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
+                    self.stack.push(Value::Bool(a < b));
+                }
                 OpCode::Add => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
@@ -69,6 +87,10 @@ impl Vm {
                     let a = self.stack.pop().unwrap();
                     self.stack.push(a / b);
                 }
+                OpCode::Not => {
+                    let val = !self.stack.pop().unwrap();
+                    self.stack.push(val);
+                }
                 OpCode::Negate => {
                     let val = -self.stack.pop().unwrap();
                     self.stack.push(val);
@@ -76,7 +98,12 @@ impl Vm {
                 OpCode::Return => {
                     return Ok(self.stack.pop().unwrap());
                 }
-                _ => return Err(Error::Interpret("unknown opcode".to_string())),
+                _ => {
+                    return Err(Error::Interpret(
+                        "unknown opcode".to_string(),
+                        chunk.get_line(instruction as usize),
+                    ))
+                }
             }
         }
     }

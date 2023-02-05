@@ -93,7 +93,10 @@ impl<'a> Compiler<'a> {
 
             return Ok(());
         } else {
-            Err(Error::Compile("Expect expression.".to_string()))
+            Err(Error::Compile(
+                "Expect expression.".to_string(),
+                self.current.line,
+            ))
         }
     }
 
@@ -160,7 +163,7 @@ impl<'a> Compiler<'a> {
 
         writeln!(out, ": {}", message).unwrap();
 
-        Err(Error::Compile(out))
+        Err(Error::Compile(out, token.line))
     }
 }
 
@@ -177,31 +180,31 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::Semicolon => Rule::new(None, None, Precedence::None),
         TokenKind::Slash => Rule::new(None, Some(&binary), Precedence::Factor),
         TokenKind::Star => Rule::new(None, Some(&binary), Precedence::Factor),
-        TokenKind::Bang => Rule::new(None, None, Precedence::None),
-        TokenKind::BangEqual => Rule::new(None, None, Precedence::None),
+        TokenKind::Bang => Rule::new(Some(&unary), None, Precedence::None),
+        TokenKind::BangEqual => Rule::new(None, Some(&binary), Precedence::Equality),
         TokenKind::Equal => Rule::new(None, None, Precedence::None),
-        TokenKind::EqualEqual => Rule::new(None, None, Precedence::None),
-        TokenKind::Greater => Rule::new(None, None, Precedence::None),
-        TokenKind::GreaterEqual => Rule::new(None, None, Precedence::None),
-        TokenKind::Less => Rule::new(None, None, Precedence::None),
-        TokenKind::LessEqual => Rule::new(None, None, Precedence::None),
+        TokenKind::EqualEqual => Rule::new(None, Some(&binary), Precedence::Equality),
+        TokenKind::Greater => Rule::new(None, Some(&binary), Precedence::Comparison),
+        TokenKind::GreaterEqual => Rule::new(None, Some(&binary), Precedence::Comparison),
+        TokenKind::Less => Rule::new(None, Some(&binary), Precedence::Comparison),
+        TokenKind::LessEqual => Rule::new(None, Some(&binary), Precedence::Comparison),
         TokenKind::Identifier => Rule::new(None, None, Precedence::None),
         TokenKind::String => Rule::new(None, None, Precedence::None),
         TokenKind::Number => Rule::new(Some(&number), None, Precedence::None),
         TokenKind::And => Rule::new(None, None, Precedence::None),
         TokenKind::Class => Rule::new(None, None, Precedence::None),
         TokenKind::Else => Rule::new(None, None, Precedence::None),
-        TokenKind::False => Rule::new(None, None, Precedence::None),
+        TokenKind::False => Rule::new(Some(&literal), None, Precedence::None),
         TokenKind::For => Rule::new(None, None, Precedence::None),
         TokenKind::Fun => Rule::new(None, None, Precedence::None),
         TokenKind::If => Rule::new(None, None, Precedence::None),
-        TokenKind::Nil => Rule::new(None, None, Precedence::None),
+        TokenKind::Nil => Rule::new(Some(&literal), None, Precedence::None),
         TokenKind::Or => Rule::new(None, None, Precedence::None),
         TokenKind::Print => Rule::new(None, None, Precedence::None),
         TokenKind::Return => Rule::new(None, None, Precedence::None),
         TokenKind::Super => Rule::new(None, None, Precedence::None),
         TokenKind::This => Rule::new(None, None, Precedence::None),
-        TokenKind::True => Rule::new(None, None, Precedence::None),
+        TokenKind::True => Rule::new(Some(&literal), None, Precedence::None),
         TokenKind::Var => Rule::new(None, None, Precedence::None),
         TokenKind::While => Rule::new(None, None, Precedence::None),
         TokenKind::Error => Rule::new(None, None, Precedence::None),
@@ -210,7 +213,7 @@ fn get_rule(kind: TokenKind) -> Rule {
 }
 
 fn grouping(compiler: &mut Compiler) -> Result<()> {
-    compiler.expression();
+    compiler.expression()?;
     compiler.consume(
         TokenKind::RightParen,
         "Expect ')' after expression.".to_string(),
@@ -223,9 +226,15 @@ fn binary(compiler: &mut Compiler) -> Result<()> {
     let compiler_rule = get_rule(operator_kind);
     compiler.parse_precedence(Precedence::decode_unchecked(
         compiler_rule.precedence as u8 + 1,
-    ));
+    ))?;
 
     match operator_kind {
+        TokenKind::BangEqual => compiler.emit_bytes(OpCode::Equal as u8, OpCode::Not as u8),
+        TokenKind::EqualEqual => compiler.emit_byte(OpCode::Equal as u8),
+        TokenKind::Greater => compiler.emit_byte(OpCode::Greater as u8),
+        TokenKind::GreaterEqual => compiler.emit_bytes(OpCode::Less as u8, OpCode::Not as u8),
+        TokenKind::Less => compiler.emit_byte(OpCode::Less as u8),
+        TokenKind::LessEqual => compiler.emit_bytes(OpCode::Greater as u8, OpCode::Not as u8),
         TokenKind::Plus => compiler.emit_byte(OpCode::Add as u8),
         TokenKind::Minus => compiler.emit_byte(OpCode::Subtract as u8),
         TokenKind::Star => compiler.emit_byte(OpCode::Multiply as u8),
@@ -243,12 +252,24 @@ fn number(compiler: &mut Compiler) -> Result<()> {
 fn unary(compiler: &mut Compiler) -> Result<()> {
     let operator_kind = compiler.previous.kind;
 
-    compiler.parse_precedence(Precedence::Unary);
+    compiler.parse_precedence(Precedence::Unary)?;
 
     match operator_kind {
+        TokenKind::Bang => compiler.emit_byte(OpCode::Not as u8),
         TokenKind::Minus => compiler.emit_byte(OpCode::Negate as u8),
         _ => {}
     }
+    Ok(())
+}
+
+fn literal(compiler: &mut Compiler) -> Result<()> {
+    match compiler.previous.kind {
+        TokenKind::False => compiler.emit_byte(OpCode::False as u8),
+        TokenKind::Nil => compiler.emit_byte(OpCode::Nil as u8),
+        TokenKind::True => compiler.emit_byte(OpCode::True as u8),
+        _ => {}
+    }
+
     Ok(())
 }
 

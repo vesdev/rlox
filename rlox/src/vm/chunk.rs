@@ -1,4 +1,4 @@
-use std::{fmt::Write};
+use std::fmt::Write;
 
 use crate::vm::{opcode::OpCode, value::Value};
 
@@ -33,6 +33,10 @@ impl Chunk {
 
     pub fn get_constant(&self, index: usize) -> Value {
         self.constants[index].clone()
+    }
+
+    pub fn get_line(&self, index: usize) -> usize {
+        self.lines[index].clone()
     }
 
     pub fn disassemble(&self, name: &str) -> Result<String, std::fmt::Error> {
