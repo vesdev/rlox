@@ -1,6 +1,7 @@
 use std::{
     fmt::Display,
     ops::{Add, Div, Mul, Neg, Not, Sub},
+    rc::Rc,
 };
 
 use super::object::*;
@@ -10,7 +11,7 @@ pub enum Value {
     Number(f64),
     Nil,
     Bool(bool),
-    Obj(Obj),
+    Obj(Rc<Obj>),
 }
 
 impl Display for Value {
@@ -45,8 +46,10 @@ impl Add for Value {
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Self::Number(l0), Self::Number(r0)) => Self::Number(l0 + r0),
-            (Self::Obj(l0), Self::Obj(r0)) => match (l0, r0) {
-                (Obj::String(l0), Obj::String(r0)) => Self::Obj(Obj::String(l0 + &r0)),
+            (Self::Obj(l0), Self::Obj(r0)) => match (l0.as_ref(), r0.as_ref()) {
+                (Obj::String(l0), Obj::String(r0)) => {
+                    Self::Obj(Rc::new(Obj::String(l0.clone() + r0)))
+                }
             },
             _ => Self::Nil,
         }
@@ -112,7 +115,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
             (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
-            (Self::Obj(l0), Self::Obj(r0)) => match (l0, r0) {
+            (Self::Obj(l0), Self::Obj(r0)) => match (l0.as_ref(), r0.as_ref()) {
                 (Obj::String(l0), Obj::String(r0)) => l0 == r0,
             },
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),

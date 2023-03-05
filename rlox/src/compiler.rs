@@ -1,6 +1,7 @@
 use crate::vm::chunk::*;
 use crate::vm::value::Value;
 use std::fmt::Write;
+use std::rc::Rc;
 
 mod scanner;
 use crate::compiler::scanner::*;
@@ -116,7 +117,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn identifier_constant(&mut self, name: Token) -> Result<u8> {
-        self.make_constant(Value::Obj(Obj::String(name.lexeme.to_string())))
+        self.make_constant(Value::Obj(Rc::new(Obj::String(name.lexeme.to_string()))))
     }
 
     fn parse_variable(&mut self, message: String) -> Result<u8> {
@@ -384,9 +385,9 @@ fn literal(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
 }
 
 fn string(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
-    compiler.emit_constant(Value::Obj(Obj::String(String::from(
+    compiler.emit_constant(Value::Obj(Rc::new(Obj::String(String::from(
         compiler.previous.lexeme.trim_matches('"'),
-    ))))
+    )))))
 }
 
 fn variable(compiler: &mut Compiler, can_assign: bool) -> Result<()> {

@@ -19,23 +19,16 @@ pub fn run<'b>(source: &'b str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::vm::{chunk::Chunk, opcode::OpCode, value};
+#[test]
+fn variables() {
+    let src = indoc::indoc! {r#"
+        var breakfast = "beignets";
+        var beverage = "cafe au lait";
+        breakfast = "beignets with " + beverage;
 
-    use super::*;
+        print breakfast;
+    "#};
 
-    #[test]
-    fn variables() {
-        let src = r#"
-var breakfast = "beignets";
-var beverage = "cafe au lait";
-breakfast = "beignets with " + beverage;
-
-print breakfast;
-"#;
-
-        println!("{}", src);
-        run(src).unwrap();
-    }
+    println!("{}", src);
+    run(src).unwrap();
 }
