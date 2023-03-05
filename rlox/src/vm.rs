@@ -1,6 +1,9 @@
 pub mod chunk;
+pub mod object;
 pub mod opcode;
 pub mod value;
+
+use std::collections::HashMap;
 
 use crate::error::*;
 
@@ -10,11 +13,14 @@ use crate::vm::{
     value::Value,
 };
 
+use self::object::Obj;
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub struct Vm {
     ip: usize,
     stack: Vec<Value>,
+    globals: HashMap<String, Value>,
 }
 
 impl Vm {
@@ -22,14 +28,15 @@ impl Vm {
         Self {
             ip: 0,
             stack: Vec::new(),
+            globals: HashMap::new(),
         }
     }
 
-    pub fn interpret(&mut self, chunk: &Chunk) -> Result<Value> {
+    pub fn interpret(&mut self, chunk: &Chunk) -> Result<()> {
         self.run(chunk)
     }
 
-    fn run(&mut self, chunk: &Chunk) -> Result<Value> {
+    fn run(&mut self, chunk: &Chunk) -> Result<()> {
         loop {
             if cfg!(debug_trace_execution) {
                 print!("\t|\t\t\t");
@@ -52,6 +59,41 @@ impl Vm {
                 OpCode::Nil => self.stack.push(Value::Nil),
                 OpCode::True => self.stack.push(Value::Bool(true)),
                 OpCode::False => self.stack.push(Value::Bool(false)),
+                OpCode::Pop => {
+                    self.stack.pop();
+                }
+                OpCode::GetGlobal => {
+                    let name = self.read_constant(chunk);
+                    if let Value::Obj(Obj::String(name)) = name {
+                        if let Some(val) = self.globals.get(&name) {
+                            self.stack.push(val.clone());
+                        } else {
+                            let msg = format!("Undefined variable {}", name).to_string();
+                            return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+                        }
+                    }
+                }
+                OpCode::DefineGlobal => {
+                    let name = self.read_constant(chunk);
+                    if let Value::Obj(Obj::String(name)) = name {
+                        self.globals
+                            .insert(name, self.stack.last().unwrap().clone());
+                    }
+                }
+                OpCode::SetGlobal => {
+                    let name = self.read_constant(chunk);
+                    if let Value::Obj(Obj::String(name)) = name {
+                        if self
+                            .globals
+                            .insert(name.clone(), self.stack.last().unwrap().clone())
+                            .is_none()
+                        {
+                            self.globals.remove(&name);
+                            let msg = format!("Undefined variable {}", name).to_string();
+                            return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+                        }
+                    }
+                }
                 OpCode::Equal => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
@@ -89,19 +131,29 @@ impl Vm {
                 }
                 OpCode::Not => {
                     let val = !self.stack.pop().unwrap();
-                    self.stack.push(val);
+                    if let Some(val) = val {
+                        self.stack.push(val);
+                    } else {
+                        return Err(Error::Interpret(
+                            "Not '!' expected boolean".to_string(),
+                            chunk.get_line(self.ip),
+                        ));
+                    }
                 }
                 OpCode::Negate => {
                     let val = -self.stack.pop().unwrap();
                     self.stack.push(val);
                 }
+                OpCode::Print => {
+                    println!("{}", self.stack.pop().unwrap());
+                }
                 OpCode::Return => {
-                    return Ok(self.stack.pop().unwrap());
+                    return Ok(());
                 }
                 _ => {
                     return Err(Error::Interpret(
                         "unknown opcode".to_string(),
-                        chunk.get_line(instruction as usize),
+                        chunk.get_line(self.ip),
                     ))
                 }
             }

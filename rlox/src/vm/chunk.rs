@@ -31,6 +31,10 @@ impl Chunk {
         self.code[index]
     }
 
+    pub fn get_bytes(&self, index: usize, length: usize) -> Vec<u8> {
+        self.code[index..(index + length)].to_vec()
+    }
+
     pub fn get_constant(&self, index: usize) -> Value {
         self.constants[index].clone()
     }
@@ -77,14 +81,16 @@ pub fn disassemble_instruction(
 
     write!(out, "{:04} {}", offset, op)?;
     let operands = match op {
-        OpCode::Constant => &chunk.constants[chunk.code[offset + 1] as usize],
+        OpCode::Constant | OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => {
+            &chunk.constants[chunk.code[offset + 1] as usize]
+        }
         _ => {
             writeln!(out)?;
             return Ok(1);
         }
     };
 
-    writeln!(out, "\t{}", operands)?;
+    writeln!(out, "( {} )", operands)?;
 
     Ok(op.operands() + 1)
 }

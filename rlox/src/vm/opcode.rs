@@ -8,6 +8,11 @@ pub enum OpCode {
     True,
     False,
 
+    Pop,
+    GetGlobal,
+    DefineGlobal,
+    SetGlobal,
+
     Equal,
     Greater,
     Less,
@@ -18,6 +23,7 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
+    Print,
 
     Return,
 
@@ -31,8 +37,8 @@ impl OpCode {
     }
 
     #[inline]
-    pub fn decode(v: u8) -> Option<OpCode> {
-        if v >= OpCode::Max as u8 {
+    pub fn decode(v: u8) -> Option<Self> {
+        if v >= Self::Max as u8 {
             None
         } else {
             Some(Self::decode_unchecked(v))
@@ -41,7 +47,7 @@ impl OpCode {
 
     pub fn operands(&self) -> usize {
         match self {
-            OpCode::Constant => 1,
+            Self::Constant | Self::DefineGlobal | Self::GetGlobal | Self::SetGlobal => 1,
             _ => 0,
         }
     }

@@ -5,8 +5,8 @@ use std::fmt::Write;
 mod scanner;
 use crate::compiler::scanner::*;
 use crate::error::*;
+use crate::vm::object::*;
 use crate::vm::opcode::OpCode;
-
 pub struct Compiler<'a> {
     source: &'a str,
     scanner: Scanner<'a>,
@@ -20,12 +20,12 @@ impl<'a> Compiler<'a> {
     pub fn compile(&mut self) -> Result<&Chunk> {
         self.panic_mode = false;
         self.advance();
-        self.expression()?;
-        if let Err(e) = self.consume(TokenKind::Eof, "Expect end of expression".to_string()) {
-            println!("{:?}", e);
-        }
-        self.end();
 
+        while !self.matches(TokenKind::Eof) {
+            self.declaration()?;
+        }
+
+        self.end();
         Ok(&self.chunk)
     }
 
@@ -69,6 +69,19 @@ impl<'a> Compiler<'a> {
         self.error_at_current(message)
     }
 
+    fn check(&mut self, kind: TokenKind) -> bool {
+        self.current.kind == kind
+    }
+
+    fn matches(&mut self, kind: TokenKind) -> bool {
+        if !self.check(kind) {
+            return false;
+        }
+
+        self.advance();
+        true
+    }
+
     fn end(&mut self) {
         self.emit_return();
 
@@ -81,27 +94,124 @@ impl<'a> Compiler<'a> {
         self.advance();
 
         if let Some(prefix) = get_rule(self.previous.kind).prefix {
-            prefix(self)?;
+            let can_assign = precendence <= Precedence::Assignment;
+            prefix(self, can_assign)?;
 
             while precendence <= get_rule(self.current.kind).precedence {
                 self.advance();
 
                 if let Some(infix) = get_rule(self.previous.kind).infix {
-                    infix(self)?;
+                    infix(self, can_assign)?;
                 }
+            }
+
+            if can_assign && self.matches(TokenKind::Equal) {
+                self.error("Invalid assignment target.".to_string())?;
             }
 
             return Ok(());
         } else {
-            Err(Error::Compile(
-                "Expect expression.".to_string(),
-                self.current.line,
-            ))
+            self.error_at_current("Expect expression.".to_string())
         }
+    }
+
+    fn identifier_constant(&mut self, name: Token) -> Result<u8> {
+        self.make_constant(Value::Obj(Obj::String(name.lexeme.to_string())))
+    }
+
+    fn parse_variable(&mut self, message: String) -> Result<u8> {
+        self.consume(TokenKind::Identifier, message)?;
+        self.identifier_constant(self.previous)
+    }
+
+    fn define_variable(&mut self, global: u8) {
+        self.emit_bytes(OpCode::DefineGlobal as u8, global)
     }
 
     fn expression(&mut self) -> Result<()> {
         self.parse_precedence(Precedence::Assignment)
+    }
+
+    fn var_declaration(&mut self) -> Result<()> {
+        let global = self.parse_variable("Expect variable name.".to_string())?;
+
+        if self.matches(TokenKind::Equal) {
+            self.expression()?;
+        } else {
+            self.emit_byte(OpCode::Nil as u8);
+        }
+
+        self.consume(
+            TokenKind::Semicolon,
+            "Expect ';' after variable declaration.".to_string(),
+        )?;
+
+        self.define_variable(global);
+        Ok(())
+    }
+
+    fn expression_statement(&mut self) -> Result<()> {
+        self.expression()?;
+        self.consume(
+            TokenKind::Semicolon,
+            "Expect ';' after expression.".to_string(),
+        )?;
+        self.emit_byte(OpCode::Pop as u8);
+        Ok(())
+    }
+
+    fn print_statement(&mut self) -> Result<()> {
+        self.expression()?;
+        self.consume(TokenKind::Semicolon, "Excpect ';' after value.".to_string())?;
+        self.emit_byte(OpCode::Print as u8);
+        Ok(())
+    }
+
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+
+        while self.current.kind != TokenKind::Eof {
+            if self.previous.kind == TokenKind::Semicolon {
+                return;
+            }
+            match self.current.kind {
+                TokenKind::Class
+                | TokenKind::Fun
+                | TokenKind::Var
+                | TokenKind::For
+                | TokenKind::If
+                | TokenKind::While
+                | TokenKind::Print
+                | TokenKind::Return => {
+                    return;
+                }
+                _ => {}
+            }
+
+            self.advance();
+        }
+    }
+
+    fn statement(&mut self) -> Result<()> {
+        if self.matches(TokenKind::Print) {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn declaration(&mut self) -> Result<()> {
+        if self.matches(TokenKind::Var) {
+            self.var_declaration()?;
+        } else {
+            self.statement()?;
+        }
+
+        if self.panic_mode {
+            self.synchronize();
+        }
+
+        Ok(())
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -188,8 +298,8 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::GreaterEqual => Rule::new(None, Some(&binary), Precedence::Comparison),
         TokenKind::Less => Rule::new(None, Some(&binary), Precedence::Comparison),
         TokenKind::LessEqual => Rule::new(None, Some(&binary), Precedence::Comparison),
-        TokenKind::Identifier => Rule::new(None, None, Precedence::None),
-        TokenKind::String => Rule::new(None, None, Precedence::None),
+        TokenKind::Identifier => Rule::new(Some(&variable), None, Precedence::None),
+        TokenKind::String => Rule::new(Some(&string), None, Precedence::None),
         TokenKind::Number => Rule::new(Some(&number), None, Precedence::None),
         TokenKind::And => Rule::new(None, None, Precedence::None),
         TokenKind::Class => Rule::new(None, None, Precedence::None),
@@ -212,7 +322,7 @@ fn get_rule(kind: TokenKind) -> Rule {
     }
 }
 
-fn grouping(compiler: &mut Compiler) -> Result<()> {
+fn grouping(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     compiler.expression()?;
     compiler.consume(
         TokenKind::RightParen,
@@ -220,7 +330,7 @@ fn grouping(compiler: &mut Compiler) -> Result<()> {
     )
 }
 
-fn binary(compiler: &mut Compiler) -> Result<()> {
+fn binary(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     let operator_kind = compiler.previous.kind;
 
     let compiler_rule = get_rule(operator_kind);
@@ -244,12 +354,12 @@ fn binary(compiler: &mut Compiler) -> Result<()> {
     Ok(())
 }
 
-fn number(compiler: &mut Compiler) -> Result<()> {
+fn number(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     let value = compiler.previous.lexeme.parse::<f64>().unwrap();
     compiler.emit_constant(Value::Number(value))
 }
 
-fn unary(compiler: &mut Compiler) -> Result<()> {
+fn unary(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     let operator_kind = compiler.previous.kind;
 
     compiler.parse_precedence(Precedence::Unary)?;
@@ -262,7 +372,7 @@ fn unary(compiler: &mut Compiler) -> Result<()> {
     Ok(())
 }
 
-fn literal(compiler: &mut Compiler) -> Result<()> {
+fn literal(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     match compiler.previous.kind {
         TokenKind::False => compiler.emit_byte(OpCode::False as u8),
         TokenKind::Nil => compiler.emit_byte(OpCode::Nil as u8),
@@ -273,6 +383,30 @@ fn literal(compiler: &mut Compiler) -> Result<()> {
     Ok(())
 }
 
+fn string(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
+    compiler.emit_constant(Value::Obj(Obj::String(String::from(
+        compiler.previous.lexeme.trim_matches('"'),
+    ))))
+}
+
+fn variable(compiler: &mut Compiler, can_assign: bool) -> Result<()> {
+    named_variable(compiler, compiler.previous, can_assign)
+}
+
+fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Result<()> {
+    let arg = compiler.identifier_constant(name)?;
+
+    if can_assign && compiler.matches(TokenKind::Equal) {
+        compiler.expression()?;
+        compiler.emit_bytes(OpCode::SetGlobal as u8, arg);
+    } else {
+        compiler.emit_bytes(OpCode::GetGlobal as u8, arg);
+    }
+
+    Ok(())
+}
+
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
@@ -286,6 +420,8 @@ enum Precedence {
     Unary,
     Call,
     Primary,
+
+    Max = Precedence::Primary as u8 + 1,
 }
 
 impl Precedence {
@@ -296,27 +432,25 @@ impl Precedence {
 
     #[inline]
     pub fn decode(v: u8) -> Option<Precedence> {
-        if v >= OpCode::Max as u8 {
+        if v >= Self::Max as u8 {
             None
         } else {
             Some(Self::decode_unchecked(v))
         }
     }
 }
-//bing problem
-//oh im ritard
 
 #[derive(Clone, Copy)]
 struct Rule {
-    prefix: Option<&'static dyn Fn(&mut Compiler) -> Result<()>>,
-    infix: Option<&'static dyn Fn(&mut Compiler) -> Result<()>>,
+    prefix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
+    infix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
     precedence: Precedence,
 }
 
 impl Rule {
     fn new(
-        prefix: Option<&'static dyn Fn(&mut Compiler) -> Result<()>>,
-        infix: Option<&'static dyn Fn(&mut Compiler) -> Result<()>>,
+        prefix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
+        infix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
         precedence: Precedence,
     ) -> Rule {
         Rule {

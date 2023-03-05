@@ -17,7 +17,9 @@ fn repl() {
         stdin.lock().read_line(&mut line).unwrap();
         let expr = line.as_str();
         println!("> {}", expr);
-        rlox::run(expr);
+        if let Err(msg) = rlox::run(expr) {
+            println!("ERROR: {:?}", msg);
+        }
     }
 }
 

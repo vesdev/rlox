@@ -3,11 +3,14 @@ use std::{
     ops::{Add, Div, Mul, Neg, Not, Sub},
 };
 
+use super::object::*;
+
 #[derive(Clone, Debug)]
 pub enum Value {
     Number(f64),
     Nil,
     Bool(bool),
+    Obj(Obj),
 }
 
 impl Display for Value {
@@ -19,6 +22,7 @@ impl Display for Value {
                 Value::Number(v) => v.to_string(),
                 Value::Nil => "Nil".to_string(),
                 Value::Bool(v) => v.to_string(),
+                Value::Obj(v) => v.to_string(),
             }
         )
     }
@@ -39,10 +43,10 @@ impl Add for Value {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        match self {
-            Self::Number(a) => match rhs {
-                Self::Number(b) => Self::Number(a + b),
-                _ => Self::Nil,
+        match (self, rhs) {
+            (Self::Number(l0), Self::Number(r0)) => Self::Number(l0 + r0),
+            (Self::Obj(l0), Self::Obj(r0)) => match (l0, r0) {
+                (Obj::String(l0), Obj::String(r0)) => Self::Obj(Obj::String(l0 + &r0)),
             },
             _ => Self::Nil,
         }
@@ -92,13 +96,13 @@ impl Div for Value {
 }
 
 impl Not for Value {
-    type Output = Self;
+    type Output = Option<Self>;
 
     fn not(self) -> Self::Output {
         match self {
-            Self::Bool(a) => Self::Bool(!a),
-            Self::Nil => Self::Bool(true),
-            _ => Self::Bool(false),
+            Self::Bool(a) => Some(Self::Bool(!a)),
+            Self::Nil => Some(Self::Bool(true)),
+            _ => None,
         }
     }
 }
@@ -108,6 +112,9 @@ impl PartialEq for Value {
         match (self, other) {
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
             (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            (Self::Obj(l0), Self::Obj(r0)) => match (l0, r0) {
+                (Obj::String(l0), Obj::String(r0)) => l0 == r0,
+            },
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }

@@ -113,7 +113,7 @@ impl<'a> Scanner<'a> {
             let c = self.peek();
             if c.is_whitespace() {
                 if c == '\n' {
-                    self.line = 1;
+                    self.line += 1;
                 }
                 self.advance();
             } else {
