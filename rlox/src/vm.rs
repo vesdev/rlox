@@ -62,35 +62,57 @@ impl Vm {
                 OpCode::Pop => {
                     self.stack.pop();
                 }
+                OpCode::GetLocal => {
+                    let slot = self.stack.pop().unwrap();
+
+                    if let Value::Number(slot) = slot {
+                        println!("slot:{}", slot);
+                        self.stack.push(self.stack[slot as usize].clone());
+                    }
+                }
+                OpCode::SetLocal => {
+                    let slot = self.stack.pop().unwrap();
+
+                    if let Value::Number(slot) = slot {
+                        self.stack[slot as usize] = self.stack.last().unwrap().clone();
+                    }
+                }
                 OpCode::GetGlobal => {
                     let name = self.read_constant(chunk);
-                    if let Value::Obj(Obj::String(name)) = name {
-                        if let Some(val) = self.globals.get(&name) {
-                            self.stack.push(val.clone());
-                        } else {
-                            let msg = format!("Undefined variable {}", name).to_string();
-                            return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+
+                    if let Value::Obj(name) = name {
+                        if let Obj::String(name) = &*name {
+                            if let Some(val) = self.globals.get(name) {
+                                self.stack.push(val.clone());
+                            } else {
+                                let msg = format!("Undefined variable {}", name).to_string();
+                                return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+                            }
                         }
                     }
                 }
                 OpCode::DefineGlobal => {
                     let name = self.read_constant(chunk);
-                    if let Value::Obj(Obj::String(name)) = name {
-                        self.globals
-                            .insert(name, self.stack.last().unwrap().clone());
+                    if let Value::Obj(name) = name {
+                        if let Obj::String(name) = &*name {
+                            self.globals
+                                .insert(name.clone(), self.stack.last().unwrap().clone());
+                        }
                     }
                 }
                 OpCode::SetGlobal => {
                     let name = self.read_constant(chunk);
-                    if let Value::Obj(Obj::String(name)) = name {
-                        if self
-                            .globals
-                            .insert(name.clone(), self.stack.last().unwrap().clone())
-                            .is_none()
-                        {
-                            self.globals.remove(&name);
-                            let msg = format!("Undefined variable {}", name).to_string();
-                            return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+                    if let Value::Obj(name) = name {
+                        if let Obj::String(name) = &*name {
+                            if self
+                                .globals
+                                .insert(name.clone(), self.stack.last().unwrap().clone())
+                                .is_none()
+                            {
+                                self.globals.remove(name);
+                                let msg = format!("Undefined variable {}", name).to_string();
+                                return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
+                            }
                         }
                     }
                 }

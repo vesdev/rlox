@@ -20,13 +20,12 @@ pub fn run<'b>(source: &'b str) -> Result<()> {
 }
 
 #[test]
-fn variables() {
+fn local_variables() {
     let src = indoc::indoc! {r#"
-        var breakfast = "beignets";
-        var beverage = "cafe au lait";
-        breakfast = "beignets with " + beverage;
-
-        print breakfast;
+        {
+            var b = "hello world";
+            print b;
+        }
     "#};
 
     println!("{}", src);

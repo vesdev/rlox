@@ -14,7 +14,7 @@ impl Display for Obj {
             f,
             "{}",
             match self {
-                Obj::String(v) => '"'.to_string() + v + &'"'.to_string(),
+                Obj::String(v) => v,
             },
         )
     }

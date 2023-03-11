@@ -1,2 +1,2 @@
 [build]
-rustflags = "--cfg debug_print_code"
+rustflags = "--cfg debug_print_code --cfg debug_trace_execution"

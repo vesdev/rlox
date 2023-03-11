@@ -13,6 +13,7 @@ pub struct Compiler<'a> {
     scanner: Scanner<'a>,
     previous: Token<'a>,
     current: Token<'a>,
+    current_locals: Locals<'a>,
     panic_mode: bool,
     chunk: Chunk,
 }
@@ -46,6 +47,7 @@ impl<'a> Compiler<'a> {
             },
             panic_mode: false,
             chunk: Chunk::new(),
+            current_locals: Locals::new(),
         }
     }
 
@@ -91,6 +93,22 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn begin_scope(&mut self) {
+        self.current_locals.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.current_locals.scope_depth -= 1;
+
+        while self.current_locals.locals.len() > 0
+            && self.current_locals.locals[self.current_locals.locals.len() - 1].depth
+                > self.current_locals.scope_depth
+        {
+            self.emit_byte(OpCode::Pop as u8);
+            self.current_locals.locals.pop();
+        }
+    }
+
     fn parse_precedence(&mut self, precendence: Precedence) -> Result<()> {
         self.advance();
 
@@ -120,17 +138,92 @@ impl<'a> Compiler<'a> {
         self.make_constant(Value::Obj(Rc::new(Obj::String(name.lexeme.to_string()))))
     }
 
+    fn identifiers_equal(&mut self, a: Token, b: Token) -> bool {
+        a.lexeme == b.lexeme
+    }
+
+    fn resolve_local(&mut self, name: Token) -> Result<isize> {
+        for i in (0..self.current_locals.locals.len()).rev() {
+            let local = self.current_locals.locals[i].clone();
+            if self.identifiers_equal(name, local.name) {
+                if local.depth == -1 {
+                    self.error("Can't read local variable in its own initializer.".to_string())?;
+                }
+                return Ok(i as isize);
+            }
+        }
+
+        return Ok(-1);
+    }
+
+    fn add_local(&mut self, name: Token<'a>) -> Result<()> {
+        if self.current_locals.locals.len() == u8::MAX as usize {
+            return self.error("Too many local variables in function.".to_string());
+        }
+
+        let local = Local::new(name, -1);
+        self.current_locals.locals.push(local);
+
+        Ok(())
+    }
+
+    fn declare_variable(&mut self) -> Result<()> {
+        if self.current_locals.scope_depth == 0 {
+            return Ok(());
+        };
+
+        let name = self.previous;
+
+        for i in (0..self.current_locals.locals.len()).rev() {
+            let local = &self.current_locals.locals[i];
+
+            if local.depth != -1 && local.depth < self.current_locals.scope_depth {
+                break;
+            }
+
+            if self.identifiers_equal(name, local.name) {
+                return self.error("Already a variable with this name in this scope.".to_string());
+            }
+        }
+
+        self.add_local(name)
+    }
+
     fn parse_variable(&mut self, message: String) -> Result<u8> {
         self.consume(TokenKind::Identifier, message)?;
+
+        self.declare_variable()?;
+        if self.current_locals.scope_depth > 0 {
+            return Ok(0);
+        }
+
         self.identifier_constant(self.previous)
     }
 
+    fn mark_initialized(&mut self) {
+        let index = self.current_locals.locals.len() - 1;
+        self.current_locals.locals[index].depth = self.current_locals.scope_depth;
+    }
+
     fn define_variable(&mut self, global: u8) {
+        if self.current_locals.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
+
         self.emit_bytes(OpCode::DefineGlobal as u8, global)
     }
 
     fn expression(&mut self) -> Result<()> {
         self.parse_precedence(Precedence::Assignment)
+    }
+
+    fn block(&mut self) -> Result<()> {
+        while !self.check(TokenKind::RightBrace) && !self.check(TokenKind::Eof) {
+            self.declaration()?;
+        }
+
+        self.consume(TokenKind::RightBrace, "Expect '}' after block.".to_string())
     }
 
     fn var_declaration(&mut self) -> Result<()> {
@@ -196,6 +289,12 @@ impl<'a> Compiler<'a> {
     fn statement(&mut self) -> Result<()> {
         if self.matches(TokenKind::Print) {
             self.print_statement()
+        } else if self.matches(TokenKind::LeftBrace) {
+            self.begin_scope();
+            self.block()?;
+            self.end_scope();
+
+            return Ok(());
         } else {
             self.expression_statement()
         }
@@ -395,13 +494,23 @@ fn variable(compiler: &mut Compiler, can_assign: bool) -> Result<()> {
 }
 
 fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Result<()> {
-    let arg = compiler.identifier_constant(name)?;
+    let (get_op, set_op);
+    let mut arg = compiler.resolve_local(name)?;
+
+    if arg != -1 {
+        get_op = OpCode::GetLocal;
+        set_op = OpCode::SetLocal;
+    } else {
+        arg = compiler.identifier_constant(name)? as isize;
+        get_op = OpCode::GetGlobal;
+        set_op = OpCode::SetGlobal;
+    }
 
     if can_assign && compiler.matches(TokenKind::Equal) {
         compiler.expression()?;
-        compiler.emit_bytes(OpCode::SetGlobal as u8, arg);
+        compiler.emit_bytes(set_op as u8, arg as u8);
     } else {
-        compiler.emit_bytes(OpCode::GetGlobal as u8, arg);
+        compiler.emit_bytes(get_op as u8, arg as u8);
     }
 
     Ok(())
@@ -459,5 +568,32 @@ impl Rule {
             infix,
             precedence,
         }
+    }
+}
+
+//TODO: rename this
+struct Locals<'a> {
+    locals: Vec<Local<'a>>,
+    scope_depth: isize,
+}
+
+impl Locals<'_> {
+    pub fn new() -> Self {
+        Self {
+            locals: Vec::with_capacity(u8::MAX as usize),
+            scope_depth: 0,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Local<'a> {
+    pub name: Token<'a>,
+    pub depth: isize,
+}
+
+impl<'a> Local<'a> {
+    pub fn new(name: Token<'a>, depth: isize) -> Self {
+        Self { name, depth }
     }
 }

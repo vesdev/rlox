@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use crate::error::Error;
+
 use super::object::*;
 
 #[derive(Clone, Debug)]
@@ -29,7 +31,7 @@ impl Display for Value {
     }
 }
 
-impl Neg for Value {
+impl Neg for Value {    
     type Output = Value;
 
     fn neg(self) -> Self::Output {

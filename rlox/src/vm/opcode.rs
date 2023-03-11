@@ -9,6 +9,8 @@ pub enum OpCode {
     False,
 
     Pop,
+    GetLocal,
+    SetLocal,
     GetGlobal,
     DefineGlobal,
     SetGlobal,
@@ -47,7 +49,12 @@ impl OpCode {
 
     pub fn operands(&self) -> usize {
         match self {
-            Self::Constant | Self::DefineGlobal | Self::GetGlobal | Self::SetGlobal => 1,
+            Self::Constant
+            | Self::DefineGlobal
+            | Self::GetGlobal
+            | Self::SetGlobal
+            | OpCode::GetLocal
+            | OpCode::SetLocal => 1,
             _ => 0,
         }
     }

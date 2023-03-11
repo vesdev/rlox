@@ -82,8 +82,9 @@ pub fn disassemble_instruction(
     write!(out, "{:04} {}", offset, op)?;
     let operands = match op {
         OpCode::Constant | OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => {
-            &chunk.constants[chunk.code[offset + 1] as usize]
+            chunk.constants[chunk.code[offset + 1] as usize].clone()
         }
+        OpCode::GetLocal | OpCode::SetLocal => Value::Number(chunk.code[offset + 1] as f64),
         _ => {
             writeln!(out)?;
             return Ok(1);
