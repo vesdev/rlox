@@ -1,19 +1,19 @@
 use std::fmt::Display;
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum OpCode {
-    Constant,
+    Constant(u8),
     Nil,
     True,
     False,
 
     Pop,
-    GetLocal,
-    SetLocal,
-    GetGlobal,
-    DefineGlobal,
-    SetGlobal,
+    GetLocal(u8),
+    SetLocal(u8),
+    GetGlobal(u8),
+    DefineGlobal(u8),
+    SetGlobal(u8),
 
     Equal,
     Greater,
@@ -28,33 +28,17 @@ pub enum OpCode {
     Print,
 
     Return,
-
-    Max = OpCode::Return as u8 + 1,
 }
 
 impl OpCode {
-    #[inline]
-    pub fn decode_unchecked(val: u8) -> Self {
-        unsafe { std::mem::transmute(val) }
-    }
-
-    #[inline]
-    pub fn decode(v: u8) -> Option<Self> {
-        if v >= Self::Max as u8 {
-            None
-        } else {
-            Some(Self::decode_unchecked(v))
-        }
-    }
-
     pub fn operands(&self) -> usize {
         match self {
-            Self::Constant
-            | Self::DefineGlobal
-            | Self::GetGlobal
-            | Self::SetGlobal
-            | OpCode::GetLocal
-            | OpCode::SetLocal => 1,
+            Self::Constant(_)
+            | Self::DefineGlobal(_)
+            | Self::GetGlobal(_)
+            | Self::SetGlobal(_)
+            | OpCode::GetLocal(_)
+            | OpCode::SetLocal(_) => 1,
             _ => 0,
         }
     }

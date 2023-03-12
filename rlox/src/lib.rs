@@ -22,8 +22,9 @@ pub fn run<'b>(source: &'b str) -> Result<()> {
 #[test]
 fn local_variables() {
     let src = indoc::indoc! {r#"
+        var a = "hello ";
         {
-            var b = "hello world";
+            var b = a + "world";
             print b;
         }
     "#};

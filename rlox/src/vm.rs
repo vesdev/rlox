@@ -50,10 +50,12 @@ impl Vm {
                 print!("{}", out);
             }
 
-            let instruction: OpCode = OpCode::decode_unchecked(self.read_byte(chunk));
+            let instruction: OpCode = chunk.get_op(self.ip);
+            self.ip += 1;
+
             match instruction {
-                OpCode::Constant => {
-                    let constant = self.read_constant(chunk);
+                OpCode::Constant(opr) => {
+                    let constant = chunk.get_constant(opr as usize);
                     self.stack.push(constant);
                 }
                 OpCode::Nil => self.stack.push(Value::Nil),
@@ -62,23 +64,13 @@ impl Vm {
                 OpCode::Pop => {
                     self.stack.pop();
                 }
-                OpCode::GetLocal => {
-                    let slot = self.stack.pop().unwrap();
+                OpCode::GetLocal(opr) => self.stack.push(self.stack[opr as usize].clone()),
+                OpCode::SetLocal(opr) => self
+                    .stack
+                    .insert(opr as usize, self.stack.last().unwrap().clone()),
 
-                    if let Value::Number(slot) = slot {
-                        println!("slot:{}", slot);
-                        self.stack.push(self.stack[slot as usize].clone());
-                    }
-                }
-                OpCode::SetLocal => {
-                    let slot = self.stack.pop().unwrap();
-
-                    if let Value::Number(slot) = slot {
-                        self.stack[slot as usize] = self.stack.last().unwrap().clone();
-                    }
-                }
-                OpCode::GetGlobal => {
-                    let name = self.read_constant(chunk);
+                OpCode::GetGlobal(opr) => {
+                    let name = chunk.get_constant(opr as usize);
 
                     if let Value::Obj(name) = name {
                         if let Obj::String(name) = &*name {
@@ -91,17 +83,19 @@ impl Vm {
                         }
                     }
                 }
-                OpCode::DefineGlobal => {
-                    let name = self.read_constant(chunk);
+                OpCode::DefineGlobal(opr) => {
+                    let name = chunk.get_constant(opr as usize);
+
                     if let Value::Obj(name) = name {
                         if let Obj::String(name) = &*name {
                             self.globals
-                                .insert(name.clone(), self.stack.last().unwrap().clone());
+                                .insert(name.clone(), self.stack.pop().unwrap().clone());
                         }
                     }
                 }
-                OpCode::SetGlobal => {
-                    let name = self.read_constant(chunk);
+                OpCode::SetGlobal(opr) => {
+                    let name = chunk.get_constant(opr as usize);
+
                     if let Value::Obj(name) = name {
                         if let Obj::String(name) = &*name {
                             if self
@@ -180,16 +174,5 @@ impl Vm {
                 }
             }
         }
-    }
-
-    #[inline]
-    fn read_byte(&mut self, chunk: &Chunk) -> u8 {
-        self.ip += 1;
-        chunk.get_byte(self.ip - 1)
-    }
-
-    #[inline]
-    fn read_constant(&mut self, chunk: &Chunk) -> Value {
-        chunk.get_constant(self.read_byte(chunk) as usize)
     }
 }

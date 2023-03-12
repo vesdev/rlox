@@ -1,9 +1,9 @@
-use std::fmt::Write;
+use std::{f32::consts::E, fmt::Write};
 
 use crate::vm::{opcode::OpCode, value::Value};
 
 pub struct Chunk {
-    code: Vec<u8>,
+    code: Vec<OpCode>,
     constants: Vec<Value>,
     lines: Vec<usize>,
 }
@@ -17,8 +17,8 @@ impl Chunk {
         }
     }
 
-    pub fn push_byte(&mut self, byte: u8, line: usize) {
-        self.code.push(byte);
+    pub fn push_op(&mut self, op: OpCode, line: usize) {
+        self.code.push(op);
         self.lines.push(line);
     }
 
@@ -27,12 +27,8 @@ impl Chunk {
         (self.constants.len() - 1) as u8
     }
 
-    pub fn get_byte(&self, index: usize) -> u8 {
+    pub fn get_op(&self, index: usize) -> OpCode {
         self.code[index]
-    }
-
-    pub fn get_bytes(&self, index: usize, length: usize) -> Vec<u8> {
-        self.code[index..(index + length)].to_vec()
     }
 
     pub fn get_constant(&self, index: usize) -> Value {
@@ -71,7 +67,7 @@ pub fn disassemble_instruction(
     chunk: &Chunk,
     offset: usize,
 ) -> Result<usize, std::fmt::Error> {
-    let op = OpCode::decode_unchecked(chunk.code[offset]);
+    let op = chunk.get_op(offset);
 
     if offset > 0 && chunk.lines[offset] == chunk.lines[offset - 1] {
         write!(out, "\t|\t")?;
@@ -81,10 +77,11 @@ pub fn disassemble_instruction(
 
     write!(out, "{:04} {}", offset, op)?;
     let operands = match op {
-        OpCode::Constant | OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => {
-            chunk.constants[chunk.code[offset + 1] as usize].clone()
-        }
-        OpCode::GetLocal | OpCode::SetLocal => Value::Number(chunk.code[offset + 1] as f64),
+        OpCode::Constant(opr)
+        | OpCode::DefineGlobal(opr)
+        | OpCode::GetGlobal(opr)
+        | OpCode::SetGlobal(opr) => chunk.constants[opr as usize].clone(),
+        OpCode::GetLocal(opr) | OpCode::SetLocal(opr) => Value::Number(opr as f64),
         _ => {
             writeln!(out)?;
             return Ok(1);

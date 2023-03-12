@@ -104,7 +104,7 @@ impl<'a> Compiler<'a> {
             && self.current_locals.locals[self.current_locals.locals.len() - 1].depth
                 > self.current_locals.scope_depth
         {
-            self.emit_byte(OpCode::Pop as u8);
+            self.emit_op(OpCode::Pop);
             self.current_locals.locals.pop();
         }
     }
@@ -211,7 +211,7 @@ impl<'a> Compiler<'a> {
             return;
         }
 
-        self.emit_bytes(OpCode::DefineGlobal as u8, global)
+        self.emit_op(OpCode::DefineGlobal(global))
     }
 
     fn expression(&mut self) -> Result<()> {
@@ -232,7 +232,7 @@ impl<'a> Compiler<'a> {
         if self.matches(TokenKind::Equal) {
             self.expression()?;
         } else {
-            self.emit_byte(OpCode::Nil as u8);
+            self.emit_op(OpCode::Nil);
         }
 
         self.consume(
@@ -250,14 +250,14 @@ impl<'a> Compiler<'a> {
             TokenKind::Semicolon,
             "Expect ';' after expression.".to_string(),
         )?;
-        self.emit_byte(OpCode::Pop as u8);
+        self.emit_op(OpCode::Pop);
         Ok(())
     }
 
     fn print_statement(&mut self) -> Result<()> {
         self.expression()?;
         self.consume(TokenKind::Semicolon, "Excpect ';' after value.".to_string())?;
-        self.emit_byte(OpCode::Print as u8);
+        self.emit_op(OpCode::Print);
         Ok(())
     }
 
@@ -318,18 +318,18 @@ impl<'a> Compiler<'a> {
         &mut self.chunk
     }
 
-    fn emit_byte(&mut self, byte: u8) {
+    fn emit_op(&mut self, op: OpCode) {
         let line = self.previous.line;
-        self.current_chunk().push_byte(byte, line)
+        self.current_chunk().push_op(op, line)
     }
 
-    fn emit_bytes(&mut self, byte: u8, byte2: u8) {
-        self.emit_byte(byte);
-        self.emit_byte(byte2);
+    fn emit_ops(&mut self, op: OpCode, op2: OpCode) {
+        self.emit_op(op);
+        self.emit_op(op2);
     }
 
     fn emit_return(&mut self) {
-        self.emit_byte(OpCode::Return as u8)
+        self.emit_op(OpCode::Return)
     }
 
     fn make_constant(&mut self, value: Value) -> Result<u8> {
@@ -343,7 +343,7 @@ impl<'a> Compiler<'a> {
 
     fn emit_constant(&mut self, value: Value) -> Result<()> {
         let constant = self.make_constant(value)?;
-        self.emit_bytes(OpCode::Constant as u8, constant);
+        self.emit_op(OpCode::Constant(constant));
         Ok(())
     }
 
@@ -434,21 +434,19 @@ fn binary(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     let operator_kind = compiler.previous.kind;
 
     let compiler_rule = get_rule(operator_kind);
-    compiler.parse_precedence(Precedence::decode_unchecked(
-        compiler_rule.precedence as u8 + 1,
-    ))?;
+    compiler.parse_precedence(compiler_rule.precedence.next())?;
 
     match operator_kind {
-        TokenKind::BangEqual => compiler.emit_bytes(OpCode::Equal as u8, OpCode::Not as u8),
-        TokenKind::EqualEqual => compiler.emit_byte(OpCode::Equal as u8),
-        TokenKind::Greater => compiler.emit_byte(OpCode::Greater as u8),
-        TokenKind::GreaterEqual => compiler.emit_bytes(OpCode::Less as u8, OpCode::Not as u8),
-        TokenKind::Less => compiler.emit_byte(OpCode::Less as u8),
-        TokenKind::LessEqual => compiler.emit_bytes(OpCode::Greater as u8, OpCode::Not as u8),
-        TokenKind::Plus => compiler.emit_byte(OpCode::Add as u8),
-        TokenKind::Minus => compiler.emit_byte(OpCode::Subtract as u8),
-        TokenKind::Star => compiler.emit_byte(OpCode::Multiply as u8),
-        TokenKind::Slash => compiler.emit_byte(OpCode::Divide as u8),
+        TokenKind::BangEqual => compiler.emit_ops(OpCode::Equal, OpCode::Not),
+        TokenKind::EqualEqual => compiler.emit_op(OpCode::Equal),
+        TokenKind::Greater => compiler.emit_op(OpCode::Greater),
+        TokenKind::GreaterEqual => compiler.emit_ops(OpCode::Less, OpCode::Not),
+        TokenKind::Less => compiler.emit_op(OpCode::Less),
+        TokenKind::LessEqual => compiler.emit_ops(OpCode::Greater, OpCode::Not),
+        TokenKind::Plus => compiler.emit_op(OpCode::Add),
+        TokenKind::Minus => compiler.emit_op(OpCode::Subtract),
+        TokenKind::Star => compiler.emit_op(OpCode::Multiply),
+        TokenKind::Slash => compiler.emit_op(OpCode::Divide),
         _ => {}
     }
     Ok(())
@@ -465,8 +463,8 @@ fn unary(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     compiler.parse_precedence(Precedence::Unary)?;
 
     match operator_kind {
-        TokenKind::Bang => compiler.emit_byte(OpCode::Not as u8),
-        TokenKind::Minus => compiler.emit_byte(OpCode::Negate as u8),
+        TokenKind::Bang => compiler.emit_op(OpCode::Not),
+        TokenKind::Minus => compiler.emit_op(OpCode::Negate),
         _ => {}
     }
     Ok(())
@@ -474,9 +472,9 @@ fn unary(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
 
 fn literal(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
     match compiler.previous.kind {
-        TokenKind::False => compiler.emit_byte(OpCode::False as u8),
-        TokenKind::Nil => compiler.emit_byte(OpCode::Nil as u8),
-        TokenKind::True => compiler.emit_byte(OpCode::True as u8),
+        TokenKind::False => compiler.emit_op(OpCode::False),
+        TokenKind::Nil => compiler.emit_op(OpCode::Nil),
+        TokenKind::True => compiler.emit_op(OpCode::True),
         _ => {}
     }
 
@@ -498,19 +496,19 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Res
     let mut arg = compiler.resolve_local(name)?;
 
     if arg != -1 {
-        get_op = OpCode::GetLocal;
-        set_op = OpCode::SetLocal;
+        get_op = OpCode::GetLocal(arg as u8);
+        set_op = OpCode::SetLocal(arg as u8);
     } else {
-        arg = compiler.identifier_constant(name)? as isize;
-        get_op = OpCode::GetGlobal;
-        set_op = OpCode::SetGlobal;
+        let arg = compiler.identifier_constant(name)?;
+        get_op = OpCode::GetGlobal(arg);
+        set_op = OpCode::SetGlobal(arg);
     }
 
     if can_assign && compiler.matches(TokenKind::Equal) {
         compiler.expression()?;
-        compiler.emit_bytes(set_op as u8, arg as u8);
+        compiler.emit_op(set_op);
     } else {
-        compiler.emit_bytes(get_op as u8, arg as u8);
+        compiler.emit_op(get_op);
     }
 
     Ok(())
@@ -530,22 +528,22 @@ enum Precedence {
     Unary,
     Call,
     Primary,
-
-    Max = Precedence::Primary as u8 + 1,
 }
 
 impl Precedence {
-    #[inline]
-    pub fn decode_unchecked(val: u8) -> Self {
-        unsafe { std::mem::transmute(val) }
-    }
-
-    #[inline]
-    pub fn decode(v: u8) -> Option<Precedence> {
-        if v >= Self::Max as u8 {
-            None
-        } else {
-            Some(Self::decode_unchecked(v))
+    pub fn next(&self) -> Self {
+        match self {
+            Self::None => Self::Assignment,
+            Self::Assignment => Self::Or,
+            Self::Or => Self::And,
+            Self::And => Self::Equality,
+            Self::Equality => Self::Comparison,
+            Self::Comparison => Self::Term,
+            Self::Term => Self::Factor,
+            Self::Factor => Self::Unary,
+            Self::Unary => Self::Call,
+            Self::Call => Self::Primary,
+            Self::Primary => Self::Primary,
         }
     }
 }
