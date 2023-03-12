@@ -134,7 +134,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn identifier_constant(&mut self, name: Token) -> Result<u8> {
+    fn identifier_constant(&mut self, name: Token) -> Result<usize> {
         self.make_constant(Value::Obj(Rc::new(Obj::String(name.lexeme.to_string()))))
     }
 
@@ -157,10 +157,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_local(&mut self, name: Token<'a>) -> Result<()> {
-        if self.current_locals.locals.len() == u8::MAX as usize {
-            return self.error("Too many local variables in function.".to_string());
-        }
-
         let local = Local::new(name, -1);
         self.current_locals.locals.push(local);
 
@@ -189,7 +185,7 @@ impl<'a> Compiler<'a> {
         self.add_local(name)
     }
 
-    fn parse_variable(&mut self, message: String) -> Result<u8> {
+    fn parse_variable(&mut self, message: String) -> Result<usize> {
         self.consume(TokenKind::Identifier, message)?;
 
         self.declare_variable()?;
@@ -205,7 +201,7 @@ impl<'a> Compiler<'a> {
         self.current_locals.locals[index].depth = self.current_locals.scope_depth;
     }
 
-    fn define_variable(&mut self, global: u8) {
+    fn define_variable(&mut self, global: usize) {
         if self.current_locals.scope_depth > 0 {
             self.mark_initialized();
             return;
@@ -332,11 +328,8 @@ impl<'a> Compiler<'a> {
         self.emit_op(OpCode::Return)
     }
 
-    fn make_constant(&mut self, value: Value) -> Result<u8> {
+    fn make_constant(&mut self, value: Value) -> Result<usize> {
         let constant = self.current_chunk().push_constant(value);
-        if constant > u8::MAX {
-            self.error("Too many constants in one chunk.".to_string())?;
-        }
 
         return Ok(constant);
     }
@@ -493,11 +486,11 @@ fn variable(compiler: &mut Compiler, can_assign: bool) -> Result<()> {
 
 fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Result<()> {
     let (get_op, set_op);
-    let mut arg = compiler.resolve_local(name)?;
+    let arg = compiler.resolve_local(name)?;
 
     if arg != -1 {
-        get_op = OpCode::GetLocal(arg as u8);
-        set_op = OpCode::SetLocal(arg as u8);
+        get_op = OpCode::GetLocal(arg as usize);
+        set_op = OpCode::SetLocal(arg as usize);
     } else {
         let arg = compiler.identifier_constant(name)?;
         get_op = OpCode::GetGlobal(arg);
@@ -514,7 +507,6 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Res
     Ok(())
 }
 
-#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
@@ -578,7 +570,7 @@ struct Locals<'a> {
 impl Locals<'_> {
     pub fn new() -> Self {
         Self {
-            locals: Vec::with_capacity(u8::MAX as usize),
+            locals: Vec::new(),
             scope_depth: 0,
         }
     }

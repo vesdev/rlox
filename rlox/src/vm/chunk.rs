@@ -22,9 +22,9 @@ impl Chunk {
         self.lines.push(line);
     }
 
-    pub fn push_constant(&mut self, value: Value) -> u8 {
+    pub fn push_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
-        (self.constants.len() - 1) as u8
+        (self.constants.len() - 1)
     }
 
     pub fn get_op(&self, index: usize) -> OpCode {
