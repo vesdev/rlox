@@ -88,9 +88,9 @@ pub fn disassemble_instruction(
     let op = chunk.get_op(offset);
 
     if offset > 0 && chunk.lines[offset] == chunk.lines[offset - 1] {
-        write!(out, "\t|\t")?;
+        write!(out, "\t")?;
     } else {
-        write!(out, "{}\t|\t", chunk.lines[offset])?;
+        write!(out, "{}\t", chunk.lines[offset])?;
     }
 
     write!(out, "{:04} {}", offset, op)?;

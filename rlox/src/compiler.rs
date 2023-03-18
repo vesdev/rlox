@@ -168,7 +168,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_local(&mut self, name: Token<'a>) -> Result<()> {
-        let local = Local::new(name, -1);
+        let local = Local::new(name, self.current_locals.scope_depth);
         self.current_locals.locals.push(local);
 
         Ok(())
@@ -277,6 +277,7 @@ impl<'a> Compiler<'a> {
 
         //condition
         let mut exit_jump = 0;
+        let mut condition_exists = false;
         if !self.matches(TokenKind::Semicolon) {
             self.expression()?;
             self.consume(
@@ -285,6 +286,7 @@ impl<'a> Compiler<'a> {
             )?;
 
             exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+            condition_exists = true;
             self.emit_op(OpCode::Pop);
         }
 
@@ -310,7 +312,7 @@ impl<'a> Compiler<'a> {
         self.emit_loop(loop_start);
 
         //condition
-        if exit_jump > 0 {
+        if condition_exists {
             self.patch_jump(exit_jump, OpCode::JumpIfFalse(0));
             self.emit_op(OpCode::Pop);
         }

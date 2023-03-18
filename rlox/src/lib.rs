@@ -22,11 +22,12 @@ pub fn run(source: &str) -> Result<(), Vec<Error>> {
 #[test]
 fn for_loop() {
     let src = indoc::indoc! {r#"
-        var i = 8;
-        
+        for(var i = 0; i < 3; i = i + 1)
         {
-            var a = i + 10;
-            print a;
+            for(var j = 0; j < 5; j = j + 1)
+            {
+                print j;
+            }
         }
     "#};
 

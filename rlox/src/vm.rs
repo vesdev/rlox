@@ -38,17 +38,7 @@ impl Vm {
 
     fn run(&mut self, chunk: &Chunk) -> Result<()> {
         loop {
-            if cfg!(debug_trace_execution) {
-                print!("\t|\t\t\t");
-                for value in &self.stack {
-                    print!("| {} ", value);
-                }
-                println!("|");
-
-                let mut out = String::new();
-                disassemble_instruction(&mut out, chunk, self.ip).unwrap();
-                print!("{}", out);
-            }
+            let last_ip = self.ip;
 
             let instruction: OpCode = chunk.get_op(self.ip);
 
@@ -64,10 +54,9 @@ impl Vm {
                     self.stack.pop();
                 }
                 OpCode::GetLocal(opr) => self.stack.push(self.stack[opr as usize].clone()),
-                OpCode::SetLocal(opr) => self
-                    .stack
-                    .insert(opr as usize, self.stack.last().unwrap().clone()),
-
+                OpCode::SetLocal(opr) => {
+                    self.stack[opr as usize] = self.stack.last().unwrap().clone();
+                }
                 OpCode::GetGlobal(opr) => {
                     let name = chunk.get_constant(opr as usize);
 
@@ -179,6 +168,20 @@ impl Vm {
             }
 
             self.ip += 1;
+
+            if cfg!(debug_trace_execution) {
+                let mut out = String::new();
+                disassemble_instruction(&mut out, chunk, last_ip).unwrap();
+                print!("{}", out);
+
+                if cfg!(debug_trace_stack) {
+                    print!("\t|\n\t|\t");
+                    for value in &self.stack {
+                        print!("| {} ", value);
+                    }
+                    println!("|\n\t|");
+                }
+            }
         }
     }
 }
