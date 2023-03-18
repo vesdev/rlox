@@ -51,7 +51,6 @@ impl Vm {
             }
 
             let instruction: OpCode = chunk.get_op(self.ip);
-            self.ip += 1;
 
             match instruction {
                 OpCode::Constant(opr) => {
@@ -163,16 +162,29 @@ impl Vm {
                 OpCode::Print => {
                     println!("{}", self.stack.pop().unwrap());
                 }
+                OpCode::Jump(offset) => {
+                    self.ip += offset - 1;
+                }
+                OpCode::JumpIfFalse(offset) => {
+                    if self.stack.last().unwrap().is_falsey() {
+                        self.ip += offset - 1;
+                    }
+                }
+                OpCode::Loop(offset) => {
+                    self.ip -= offset + 1;
+                }
                 OpCode::Return => {
                     return Ok(());
                 }
-                _ => {
-                    return Err(Error::Interpret(
-                        "unknown opcode".to_string(),
-                        chunk.get_line(self.ip),
-                    ))
-                }
             }
+
+            self.ip += 1;
         }
+    }
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
     }
 }

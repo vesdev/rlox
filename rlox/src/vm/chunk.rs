@@ -1,4 +1,4 @@
-use std::{f32::consts::E, fmt::Write};
+use std::fmt::Write;
 
 use crate::vm::{opcode::OpCode, value::Value};
 
@@ -24,7 +24,11 @@ impl Chunk {
 
     pub fn push_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
-        (self.constants.len() - 1)
+        self.constants.len() - 1
+    }
+
+    pub fn insert_op(&mut self, op: OpCode, index: usize) {
+        self.code[index] = op;
     }
 
     pub fn get_op(&self, index: usize) -> OpCode {
@@ -36,12 +40,26 @@ impl Chunk {
     }
 
     pub fn get_line(&self, index: usize) -> usize {
-        self.lines[index].clone()
+        self.lines[index]
     }
 
     pub fn disassemble(&self, name: &str) -> Result<String, std::fmt::Error> {
         let out = String::new();
         disassemble_chunk(out, self, name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
+    }
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -81,7 +99,11 @@ pub fn disassemble_instruction(
         | OpCode::DefineGlobal(opr)
         | OpCode::GetGlobal(opr)
         | OpCode::SetGlobal(opr) => chunk.constants[opr as usize].clone(),
-        OpCode::GetLocal(opr) | OpCode::SetLocal(opr) => Value::Number(opr as f64),
+        OpCode::GetLocal(opr)
+        | OpCode::SetLocal(opr)
+        | OpCode::Jump(opr)
+        | OpCode::JumpIfFalse(opr)
+        | OpCode::Loop(opr) => Value::Number(opr as f64),
         _ => {
             writeln!(out)?;
             return Ok(1);
@@ -90,5 +112,5 @@ pub fn disassemble_instruction(
 
     writeln!(out, "( {} )", operands)?;
 
-    Ok(op.operands() + 1)
+    Ok(1)
 }

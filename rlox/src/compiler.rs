@@ -1,5 +1,6 @@
 use crate::vm::chunk::*;
 use crate::vm::value::Value;
+
 use std::fmt::Write;
 use std::rc::Rc;
 
@@ -9,31 +10,34 @@ use crate::error::*;
 use crate::vm::object::*;
 use crate::vm::opcode::OpCode;
 pub struct Compiler<'a> {
-    source: &'a str,
     scanner: Scanner<'a>,
     previous: Token<'a>,
     current: Token<'a>,
     current_locals: Locals<'a>,
     panic_mode: bool,
+    errors: Vec<Error>,
     chunk: Chunk,
 }
 
 impl<'a> Compiler<'a> {
-    pub fn compile(&mut self) -> Result<&Chunk> {
+    pub fn compile(&mut self) -> Result<&Chunk, Vec<Error>> {
         self.panic_mode = false;
         self.advance();
 
         while !self.matches(TokenKind::Eof) {
-            self.declaration()?;
+            self.declaration();
         }
 
         self.end();
+
+        if !self.errors.is_empty() {
+            return Err(std::mem::take(&mut self.errors));
+        }
         Ok(&self.chunk)
     }
 
     pub fn new(source: &'a str) -> Self {
         Self {
-            source,
             scanner: Scanner::new(source),
             previous: Token {
                 kind: TokenKind::Error,
@@ -48,6 +52,7 @@ impl<'a> Compiler<'a> {
             panic_mode: false,
             chunk: Chunk::new(),
             current_locals: Locals::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -85,6 +90,12 @@ impl<'a> Compiler<'a> {
         true
     }
 
+    fn current_kind(&mut self) -> TokenKind {
+        let kind = self.current.kind;
+        self.advance();
+        kind
+    }
+
     fn end(&mut self) {
         self.emit_return();
 
@@ -100,7 +111,7 @@ impl<'a> Compiler<'a> {
     fn end_scope(&mut self) {
         self.current_locals.scope_depth -= 1;
 
-        while self.current_locals.locals.len() > 0
+        while !self.current_locals.locals.is_empty()
             && self.current_locals.locals[self.current_locals.locals.len() - 1].depth
                 > self.current_locals.scope_depth
         {
@@ -128,7 +139,7 @@ impl<'a> Compiler<'a> {
                 self.error("Invalid assignment target.".to_string())?;
             }
 
-            return Ok(());
+            Ok(())
         } else {
             self.error_at_current("Expect expression.".to_string())
         }
@@ -153,7 +164,7 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        return Ok(-1);
+        Ok(-1)
     }
 
     fn add_local(&mut self, name: Token<'a>) -> Result<()> {
@@ -216,7 +227,7 @@ impl<'a> Compiler<'a> {
 
     fn block(&mut self) -> Result<()> {
         while !self.check(TokenKind::RightBrace) && !self.check(TokenKind::Eof) {
-            self.declaration()?;
+            self.declaration();
         }
 
         self.consume(TokenKind::RightBrace, "Expect '}' after block.".to_string())
@@ -250,10 +261,118 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn for_statement(&mut self) -> Result<()> {
+        self.begin_scope();
+        self.consume(TokenKind::LeftParen, "Expect '(' after 'for'.".to_string())?;
+
+        if self.matches(TokenKind::Semicolon) {
+            // no initializer
+        } else if self.matches(TokenKind::Var) {
+            self.var_declaration()?;
+        } else {
+            self.expression_statement()?;
+        }
+
+        let mut loop_start = self.current_chunk().len();
+
+        //condition
+        let mut exit_jump = 0;
+        if !self.matches(TokenKind::Semicolon) {
+            self.expression()?;
+            self.consume(
+                TokenKind::Semicolon,
+                "Expect ';' after loop condition.".to_string(),
+            )?;
+
+            exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+            self.emit_op(OpCode::Pop);
+        }
+
+        //increment
+        if !self.matches(TokenKind::RightParen) {
+            let body_jump = self.emit_jump(OpCode::Jump(0));
+            let increment_start = self.current_chunk().len();
+
+            self.expression()?;
+            self.emit_op(OpCode::Pop);
+            self.consume(
+                TokenKind::RightParen,
+                "Expect ')' after for clauses.".to_string(),
+            )?;
+
+            self.emit_loop(loop_start);
+
+            loop_start = increment_start;
+            self.patch_jump(body_jump, OpCode::Jump(0));
+        }
+
+        self.statement()?;
+        self.emit_loop(loop_start);
+
+        //condition
+        if exit_jump > 0 {
+            self.patch_jump(exit_jump, OpCode::JumpIfFalse(0));
+            self.emit_op(OpCode::Pop);
+        }
+
+        self.end_scope();
+
+        Ok(())
+    }
+
+    fn if_statement(&mut self) -> Result<()> {
+        self.consume(TokenKind::LeftParen, "Expect '(' after 'if'.".to_string())?;
+        self.expression()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Expect ')' after condition.".to_string(),
+        )?;
+
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+        self.emit_op(OpCode::Pop);
+
+        self.statement()?;
+
+        let else_jump = self.emit_jump(OpCode::Jump(0));
+
+        self.patch_jump(then_jump, OpCode::JumpIfFalse(0));
+        self.emit_op(OpCode::Pop);
+
+        if self.matches(TokenKind::Else) {
+            self.statement()?;
+        }
+        self.patch_jump(else_jump, OpCode::Jump(0));
+
+        Ok(())
+    }
+
     fn print_statement(&mut self) -> Result<()> {
         self.expression()?;
         self.consume(TokenKind::Semicolon, "Excpect ';' after value.".to_string())?;
         self.emit_op(OpCode::Print);
+        Ok(())
+    }
+
+    fn while_statement(&mut self) -> Result<()> {
+        let loop_start = self.current_chunk().len();
+        self.consume(
+            TokenKind::LeftParen,
+            "Expect '(' after 'while'.".to_string(),
+        )?;
+
+        self.expression()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Expect ')' after condition.".to_string(),
+        )?;
+
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+        self.emit_op(OpCode::Pop);
+        self.statement()?;
+        self.emit_loop(loop_start);
+
+        self.patch_jump(exit_jump, OpCode::JumpIfFalse(0));
+        self.emit_op(OpCode::Pop);
         Ok(())
     }
 
@@ -283,31 +402,32 @@ impl<'a> Compiler<'a> {
     }
 
     fn statement(&mut self) -> Result<()> {
-        if self.matches(TokenKind::Print) {
-            self.print_statement()
-        } else if self.matches(TokenKind::LeftBrace) {
-            self.begin_scope();
-            self.block()?;
-            self.end_scope();
+        match self.current_kind() {
+            TokenKind::Print => self.print_statement(),
+            TokenKind::For => self.for_statement(),
+            TokenKind::If => self.if_statement(),
+            TokenKind::While => self.while_statement(),
+            TokenKind::LeftBrace => {
+                self.begin_scope();
+                self.block()?;
+                self.end_scope();
 
-            return Ok(());
-        } else {
-            self.expression_statement()
+                Ok(())
+            }
+            _ => self.expression_statement(),
         }
     }
 
-    fn declaration(&mut self) -> Result<()> {
+    fn declaration(&mut self) {
         if self.matches(TokenKind::Var) {
-            self.var_declaration()?;
+            let _res = self.var_declaration();
         } else {
-            self.statement()?;
+            let _res = self.statement();
         }
 
         if self.panic_mode {
             self.synchronize();
         }
-
-        Ok(())
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -324,6 +444,16 @@ impl<'a> Compiler<'a> {
         self.emit_op(op2);
     }
 
+    fn emit_loop(&mut self, loop_start: usize) {
+        let offset = self.current_chunk().len() - loop_start;
+        self.emit_op(OpCode::Loop(offset));
+    }
+
+    fn emit_jump(&mut self, op: OpCode) -> usize {
+        self.emit_op(op);
+        self.current_chunk().len() - 1
+    }
+
     fn emit_return(&mut self) {
         self.emit_op(OpCode::Return)
     }
@@ -331,13 +461,28 @@ impl<'a> Compiler<'a> {
     fn make_constant(&mut self, value: Value) -> Result<usize> {
         let constant = self.current_chunk().push_constant(value);
 
-        return Ok(constant);
+        Ok(constant)
     }
 
     fn emit_constant(&mut self, value: Value) -> Result<()> {
         let constant = self.make_constant(value)?;
         self.emit_op(OpCode::Constant(constant));
         Ok(())
+    }
+
+    fn patch_jump(&mut self, offset: usize, op: OpCode) {
+        let jump = self.current_chunk().len() - offset;
+
+        match op {
+            OpCode::JumpIfFalse(_) => {
+                self.current_chunk()
+                    .insert_op(OpCode::JumpIfFalse(jump), offset);
+            }
+            OpCode::Jump(_) => {
+                self.current_chunk().insert_op(OpCode::Jump(jump), offset);
+            }
+            _ => (),
+        }
     }
 
     fn error_at_current(&mut self, message: String) -> Result<()> {
@@ -365,6 +510,8 @@ impl<'a> Compiler<'a> {
         }
 
         writeln!(out, ": {}", message).unwrap();
+
+        self.errors.push(Error::Compile(out.clone(), token.line));
 
         Err(Error::Compile(out, token.line))
     }
@@ -394,7 +541,7 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::Identifier => Rule::new(Some(&variable), None, Precedence::None),
         TokenKind::String => Rule::new(Some(&string), None, Precedence::None),
         TokenKind::Number => Rule::new(Some(&number), None, Precedence::None),
-        TokenKind::And => Rule::new(None, None, Precedence::None),
+        TokenKind::And => Rule::new(None, Some(&and), Precedence::And),
         TokenKind::Class => Rule::new(None, None, Precedence::None),
         TokenKind::Else => Rule::new(None, None, Precedence::None),
         TokenKind::False => Rule::new(Some(&literal), None, Precedence::None),
@@ -402,7 +549,7 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::Fun => Rule::new(None, None, Precedence::None),
         TokenKind::If => Rule::new(None, None, Precedence::None),
         TokenKind::Nil => Rule::new(Some(&literal), None, Precedence::None),
-        TokenKind::Or => Rule::new(None, None, Precedence::None),
+        TokenKind::Or => Rule::new(None, Some(&or), Precedence::Or),
         TokenKind::Print => Rule::new(None, None, Precedence::None),
         TokenKind::Return => Rule::new(None, None, Precedence::None),
         TokenKind::Super => Rule::new(None, None, Precedence::None),
@@ -507,6 +654,29 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) -> Res
     Ok(())
 }
 
+fn and(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
+    let end_jump = compiler.emit_jump(OpCode::JumpIfFalse(0));
+
+    compiler.emit_op(OpCode::Pop);
+    compiler.parse_precedence(Precedence::And)?;
+
+    compiler.patch_jump(end_jump, OpCode::JumpIfFalse(0));
+    Ok(())
+}
+
+fn or(compiler: &mut Compiler, _can_assign: bool) -> Result<()> {
+    let else_jump = compiler.emit_jump(OpCode::JumpIfFalse(0));
+    let end_jump = compiler.emit_jump(OpCode::Jump(0));
+
+    compiler.patch_jump(else_jump, OpCode::JumpIfFalse(0));
+    compiler.emit_op(OpCode::Pop);
+
+    compiler.parse_precedence(Precedence::Or)?;
+    compiler.patch_jump(end_jump, OpCode::Jump(0));
+
+    Ok(())
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
@@ -540,19 +710,17 @@ impl Precedence {
     }
 }
 
+type RuleFn = &'static dyn Fn(&mut Compiler, bool) -> Result<()>;
+
 #[derive(Clone, Copy)]
 struct Rule {
-    prefix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
-    infix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
+    prefix: Option<RuleFn>,
+    infix: Option<RuleFn>,
     precedence: Precedence,
 }
 
 impl Rule {
-    fn new(
-        prefix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
-        infix: Option<&'static dyn Fn(&mut Compiler, bool) -> Result<()>>,
-        precedence: Precedence,
-    ) -> Rule {
+    fn new(prefix: Option<RuleFn>, infix: Option<RuleFn>, precedence: Precedence) -> Rule {
         Rule {
             prefix,
             infix,

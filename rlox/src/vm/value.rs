@@ -4,8 +4,6 @@ use std::{
     rc::Rc,
 };
 
-use crate::error::Error;
-
 use super::object::*;
 
 #[derive(Clone, Debug)]
@@ -14,6 +12,17 @@ pub enum Value {
     Nil,
     Bool(bool),
     Obj(Rc<Obj>),
+}
+
+impl Value {
+    pub fn is_falsey(&self) -> bool {
+        match self {
+            Value::Number(n) => n < &1.0,
+            Value::Nil => false,
+            Value::Bool(n) => n == &false,
+            Value::Obj(_) => false,
+        }
+    }
 }
 
 impl Display for Value {

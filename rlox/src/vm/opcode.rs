@@ -25,6 +25,9 @@ pub enum OpCode {
     Not,
     Negate,
     Print,
+    Jump(usize),
+    JumpIfFalse(usize),
+    Loop(usize),
 
     Return,
 }
@@ -50,7 +53,10 @@ impl OpCode {
             | Self::GetGlobal(_)
             | Self::SetGlobal(_)
             | OpCode::GetLocal(_)
-            | OpCode::SetLocal(_) => 1,
+            | OpCode::SetLocal(_)
+            | OpCode::Jump(_)
+            | OpCode::JumpIfFalse(_)
+            | OpCode::Loop(_) => 1,
             _ => 0,
         }
     }

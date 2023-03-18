@@ -5,30 +5,35 @@ pub mod error;
 pub mod vm;
 
 use error::*;
-use vm::{chunk::Chunk, Vm};
+use vm::Vm;
 
-pub fn run_file(path: PathBuf) -> Result<()> {
-    let src = std::fs::read_to_string(path).map_err(|e| Error::Io(e.to_string()))?;
+pub fn run_file(path: PathBuf) -> Result<(), Vec<Error>> {
+    let src = std::fs::read_to_string(path).map_err(|e| vec![Error::Io(e.to_string())])?;
     run(src.as_str())
 }
 
-pub fn run<'b>(source: &'b str) -> Result<()> {
+pub fn run(source: &str) -> Result<(), Vec<Error>> {
     let mut compiler = compiler::Compiler::new(source);
     let mut vm = Vm::new();
-    vm.interpret(compiler.compile()?)?;
+    vm.interpret(compiler.compile()?).map_err(|e| vec![e])?;
     Ok(())
 }
 
 #[test]
-fn local_variables() {
+fn for_loop() {
     let src = indoc::indoc! {r#"
-        var a = "hello ";
+        var i = 8;
+        
         {
-            var b = a + "world";
-            print b;
+            var a = i + 10;
+            print a;
         }
     "#};
 
     println!("{}", src);
-    run(src).unwrap();
+
+    if let Err(e) = run(src) {
+        println!("{:#?}", e);
+        panic!();
+    }
 }

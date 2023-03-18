@@ -17,8 +17,8 @@ fn repl() {
         stdin.lock().read_line(&mut line).unwrap();
         let expr = line.as_str();
         println!("> {}", expr);
-        if let Err(msg) = rlox::run(expr) {
-            println!("ERROR: {:?}", msg);
+        if let Err(e) = rlox::run(expr) {
+            println!("ERROR: {:#?}", e);
         }
     }
 }
@@ -27,7 +27,9 @@ fn main() {
     let args = Cli::parse();
 
     if let Some(path) = args.path {
-        rlox::run_file(path);
+        if let Err(e) = rlox::run_file(path) {
+            println!("ERROR: {:#?}", e);
+        }
     } else {
         repl();
     }
