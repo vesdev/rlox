@@ -191,6 +191,17 @@ impl<'a> Scanner<'a> {
     }
 }
 
+impl Default for Scanner<'_> {
+    fn default() -> Self {
+        Self {
+            source: Default::default(),
+            start: Default::default(),
+            current: Default::default(),
+            line: Default::default(),
+        }
+    }
+}
+
 //copy pasted LULE
 #[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {

@@ -6,12 +6,12 @@ use std::{
 
 use super::object::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     Nil,
     Bool(bool),
-    Obj(Rc<Obj>),
+    Obj(Obj),
 }
 
 impl Value {
@@ -41,70 +41,66 @@ impl Display for Value {
 }
 
 impl Neg for Value {
-    type Output = Value;
+    type Output = Option<Value>;
 
     fn neg(self) -> Self::Output {
         match self {
-            Self::Number(v) => Self::Number(-v),
-            _ => Self::Nil,
+            Self::Number(v) => Some(Self::Number(-v)),
+            _ => None,
         }
     }
 }
 
 impl Add for Value {
-    type Output = Self;
+    type Output = Option<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::Number(l0), Self::Number(r0)) => Self::Number(l0 + r0),
-            (Self::Obj(l0), Self::Obj(r0)) => match (l0.as_ref(), r0.as_ref()) {
-                (Obj::String(l0), Obj::String(r0)) => {
-                    Self::Obj(Rc::new(Obj::String(l0.clone() + r0)))
-                }
-            },
-            _ => Self::Nil,
+            (Self::Number(l0), Self::Number(r0)) => Some(Self::Number(l0 + r0)),
+            (Self::Obj(l0), Self::Obj(r0)) => (l0 + r0).map(Self::Obj),
+            _ => None,
         }
     }
 }
 
 impl Sub for Value {
-    type Output = Self;
+    type Output = Option<Self>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Self::Number(a - b),
-                _ => Self::Nil,
+                Self::Number(b) => Some(Self::Number(a - b)),
+                _ => None,
             },
-            _ => Self::Nil,
+            _ => None,
         }
     }
 }
 
 impl Mul for Value {
-    type Output = Self;
+    type Output = Option<Self>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Self::Number(a * b),
-                _ => Self::Nil,
+                Self::Number(b) => Some(Self::Number(a * b)),
+                _ => None,
             },
-            _ => Self::Nil,
+            _ => None,
         }
     }
 }
 
 impl Div for Value {
-    type Output = Self;
+    type Output = Option<Self>;
 
     fn div(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Self::Number(a / b),
-                _ => Self::Nil,
+                Self::Number(b) => Some(Self::Number(a / b)),
+                _ => None,
             },
-            _ => Self::Nil,
+            _ => None,
         }
     }
 }
@@ -117,19 +113,6 @@ impl Not for Value {
             Self::Bool(a) => Some(Self::Bool(!a)),
             Self::Nil => Some(Self::Bool(true)),
             _ => None,
-        }
-    }
-}
-
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Number(l0), Self::Number(r0)) => l0 == r0,
-            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
-            (Self::Obj(l0), Self::Obj(r0)) => match (l0.as_ref(), r0.as_ref()) {
-                (Obj::String(l0), Obj::String(r0)) => l0 == r0,
-            },
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
 }

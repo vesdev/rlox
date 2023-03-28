@@ -13,22 +13,43 @@ pub fn run_file(path: PathBuf) -> Result<(), Vec<Error>> {
 }
 
 pub fn run(source: &str) -> Result<(), Vec<Error>> {
-    let mut compiler = compiler::Compiler::new(source);
-    let mut vm = Vm::new();
-    vm.interpret(compiler.compile()?).map_err(|e| vec![e])?;
+    let mut compiler = compiler::Compiler::new(source, compiler::FunctionKind::Script);
+    Vm::new()
+        .call(&compiler.compile()?, 0)
+        .map_err(|e| vec![e])?;
     Ok(())
 }
 
 #[test]
 fn for_loop() {
     let src = indoc::indoc! {r#"
-        for(var i = 0; i < 3; i = i + 1)
+
+        for(var i = 3; i < 3; i = i + 1)
         {
             for(var j = 0; j < 5; j = j + 1)
             {
                 print j;
             }
         }
+    "#};
+
+    println!("{}", src);
+
+    if let Err(e) = run(src) {
+        println!("{:#?}", e);
+        panic!();
+    }
+}
+
+#[test]
+fn func() {
+    let src = indoc::indoc! {r#"
+
+        fun foo() {
+            print "aaa";
+        }
+
+        print foo;
     "#};
 
     println!("{}", src);

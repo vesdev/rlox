@@ -3,9 +3,9 @@ pub mod object;
 pub mod opcode;
 pub mod value;
 
-use std::collections::HashMap;
-
 use crate::error::*;
+use colored::Colorize;
+use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -13,34 +13,58 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::Obj;
+use self::object::Function;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub struct Vm {
-    ip: usize,
-    stack: Vec<Value>,
-    globals: HashMap<String, Value>,
+macro_rules! stack_operands {
+    ( $vec:expr $(, $name:ident)+ ) => {
+        $(
+            let $name = $vec.pop().unwrap();
+        )*
+    };
 }
 
-impl Vm {
+pub struct Vm<'a> {
+    stack: Vec<Value>,
+    globals: HashMap<String, Value>,
+    frames: Vec<CallFrame<'a>>,
+}
+
+impl<'a> Vm<'a> {
     pub fn new() -> Self {
         Self {
-            ip: 0,
             stack: Vec::new(),
             globals: HashMap::new(),
+            frames: Vec::new(),
         }
     }
 
-    pub fn interpret(&mut self, chunk: &Chunk) -> Result<()> {
-        self.run(chunk)
+    pub fn call(&mut self, function: &'a Function, arg_count: usize) -> Result<()> {
+        self.frames
+            .push(CallFrame::new(function, self.stack.len() - arg_count));
+        self.run(function)
     }
 
-    fn run(&mut self, chunk: &Chunk) -> Result<()> {
-        loop {
-            let last_ip = self.ip;
+    fn run(&mut self, function: &Function) -> Result<()> {
+        let chunk = &function.chunk;
+        let mut frame = self.frames.last_mut().unwrap();
 
-            let instruction: OpCode = chunk.get_op(self.ip);
+        loop {
+            let last_ip = frame.ip;
+            let instruction: OpCode = chunk.get_op(frame.ip);
+
+            if cfg!(debug_trace_execution) {
+                let mut out = String::new();
+                disassemble_instruction(&mut out, chunk, last_ip).unwrap();
+
+                print!("{}|", out);
+
+                for value in &self.stack {
+                    print!(" {}, ", value.to_string().green());
+                }
+                println!("|");
+            }
 
             match instruction {
                 OpCode::Constant(opr) => {
@@ -53,141 +77,152 @@ impl Vm {
                 OpCode::Pop => {
                     self.stack.pop();
                 }
-                OpCode::GetLocal(opr) => self.stack.push(self.stack[opr as usize].clone()),
+                OpCode::GetLocal(opr) => self
+                    .stack
+                    .push(self.stack[opr as usize + frame.slot].clone()),
                 OpCode::SetLocal(opr) => {
-                    self.stack[opr as usize] = self.stack.last().unwrap().clone();
+                    self.stack[opr as usize + frame.slot] = self.stack.last().unwrap().clone();
                 }
                 OpCode::GetGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize);
+                    let name = chunk.get_constant(opr as usize).to_string();
 
-                    if let Value::Obj(name) = name {
-                        if let Obj::String(name) = &*name {
-                            if let Some(val) = self.globals.get(name) {
-                                self.stack.push(val.clone());
-                            } else {
-                                let msg = format!("Undefined variable {}", name).to_string();
-                                return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
-                            }
-                        }
+                    if let Some(val) = self.globals.get(&name) {
+                        self.stack.push(val.clone());
+                    } else {
+                        let msg = format!("Undefined variable {}", name);
+                        return Err(Error::Runtime(msg, chunk.get_line(frame.ip + frame.slot)));
                     }
                 }
                 OpCode::DefineGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize);
+                    let name = chunk.get_constant(opr as usize).to_string();
 
-                    if let Value::Obj(name) = name {
-                        if let Obj::String(name) = &*name {
-                            self.globals
-                                .insert(name.clone(), self.stack.pop().unwrap().clone());
-                        }
-                    }
+                    self.globals.insert(name, self.stack.pop().unwrap().clone());
                 }
                 OpCode::SetGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize);
+                    let name = chunk.get_constant(opr as usize).to_string();
 
-                    if let Value::Obj(name) = name {
-                        if let Obj::String(name) = &*name {
-                            if self
-                                .globals
-                                .insert(name.clone(), self.stack.last().unwrap().clone())
-                                .is_none()
-                            {
-                                self.globals.remove(name);
-                                let msg = format!("Undefined variable {}", name).to_string();
-                                return Err(Error::Interpret(msg, chunk.get_line(self.ip)));
-                            }
-                        }
+                    if self
+                        .globals
+                        .insert(name.clone(), self.stack.last().unwrap().clone())
+                        .is_none()
+                    {
+                        self.globals.remove(&name);
+                        let msg = format!("Undefined variable {}", name);
+                        return Err(Error::Runtime(msg, chunk.get_line(frame.ip + frame.slot)));
                     }
                 }
                 OpCode::Equal => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
+                    stack_operands!(self.stack, b, a);
                     self.stack.push(Value::Bool(a == b));
                 }
                 OpCode::Greater => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
+                    stack_operands!(self.stack, b, a);
                     self.stack.push(Value::Bool(a > b));
                 }
                 OpCode::Less => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
+                    stack_operands!(self.stack, b, a);
                     self.stack.push(Value::Bool(a < b));
                 }
                 OpCode::Add => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    self.stack.push(a + b);
+                    stack_operands!(self.stack, b, a);
+                    self.stack.push((a + b).unwrap());
                 }
                 OpCode::Subtract => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    self.stack.push(a - b);
+                    stack_operands!(self.stack, b, a);
+                    self.stack.push((a - b).unwrap());
                 }
                 OpCode::Multiply => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    self.stack.push(a * b);
+                    stack_operands!(self.stack, b, a);
+                    self.stack.push((a * b).unwrap());
                 }
                 OpCode::Divide => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    self.stack.push(a / b);
+                    stack_operands!(self.stack, b, a);
+                    self.stack.push((a / b).unwrap());
                 }
                 OpCode::Not => {
-                    let val = !self.stack.pop().unwrap();
-                    if let Some(val) = val {
-                        self.stack.push(val);
-                    } else {
-                        return Err(Error::Interpret(
-                            "Not '!' expected boolean".to_string(),
-                            chunk.get_line(self.ip),
-                        ));
-                    }
+                    stack_operands!(self.stack, a);
+                    self.stack.push((!a).unwrap());
                 }
                 OpCode::Negate => {
-                    let val = -self.stack.pop().unwrap();
-                    self.stack.push(val);
+                    stack_operands!(self.stack, a);
+                    self.stack.push((-a).unwrap());
                 }
                 OpCode::Print => {
-                    println!("{}", self.stack.pop().unwrap());
+                    stack_operands!(self.stack, a);
+                    let mut a = a.to_string();
+
+                    if cfg!(debug_trace_execution) {
+                        println!("{}", "     -----Print-----".magenta());
+                        a.insert_str(0, "     ");
+                        a = a.replace('\n', "\n     ");
+                    }
+
+                    println!("{}", a);
+
+                    if cfg!(debug_trace_execution) {
+                        println!("{}", "     ---------------".magenta());
+                    }
                 }
                 OpCode::Jump(offset) => {
-                    self.ip += offset - 1;
+                    //self.ip += offset - 1;
+                    frame.ip += offset - 1;
                 }
                 OpCode::JumpIfFalse(offset) => {
                     if self.stack.last().unwrap().is_falsey() {
-                        self.ip += offset - 1;
+                        frame.ip += offset - 1;
                     }
                 }
                 OpCode::Loop(offset) => {
-                    self.ip -= offset + 1;
+                    frame.ip -= offset + 1;
+                }
+                OpCode::Call(count) => {
+                    if self.call_value(frame.slot + count, count).is_err() {
+                        return Err(Error::Runtime(
+                            "Call Failed".to_string(),
+                            chunk.get_line(frame.ip + frame.slot),
+                        ));
+                    }
+
+                    frame = self.frames.last_mut().unwrap();
                 }
                 OpCode::Return => {
                     return Ok(());
                 }
             }
 
-            self.ip += 1;
-
-            if cfg!(debug_trace_execution) {
-                let mut out = String::new();
-                disassemble_instruction(&mut out, chunk, last_ip).unwrap();
-                print!("{}", out);
-
-                if cfg!(debug_trace_stack) {
-                    print!("\t|\n\t|\t");
-                    for value in &self.stack {
-                        print!("| {} ", value);
-                    }
-                    println!("|\n\t|");
-                }
-            }
+            frame.ip += 1;
         }
+    }
+
+    fn call_value(&mut self, callee: usize, arg_count: usize) -> Result<()> {
+        match &self.stack[callee] {
+            Value::Obj(object::Obj::Function(func)) => {
+                return self.call(&func, arg_count);
+            }
+            _ => {}
+        }
+        Err(Error::Runtime("".to_string(), 0))
     }
 }
 
-impl Default for Vm {
+impl Default for Vm<'_> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct CallFrame<'a> {
+    function: &'a Function,
+    ip: usize,
+    slot: usize,
+}
+
+impl<'a> CallFrame<'a> {
+    pub fn new(function: &'a Function, slot: usize) -> CallFrame {
+        CallFrame {
+            function,
+            ip: 0,
+            slot,
+        }
     }
 }

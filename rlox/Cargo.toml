@@ -7,5 +7,6 @@ edition = "2021"
 [lib]
 
 [dependencies]
+colored = "2.0.0"
 indoc = "2.0.0"
 thiserror = "1.0.39"

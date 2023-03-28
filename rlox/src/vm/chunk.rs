@@ -1,7 +1,9 @@
 use std::fmt::Write;
 
 use crate::vm::{opcode::OpCode, value::Value};
+use colored::Colorize;
 
+#[derive(Clone, Debug)]
 pub struct Chunk {
     code: Vec<OpCode>,
     constants: Vec<Value>,
@@ -43,9 +45,9 @@ impl Chunk {
         self.lines[index]
     }
 
-    pub fn disassemble(&self, name: &str) -> Result<String, std::fmt::Error> {
+    pub fn disassemble(&self, name: impl Into<String>) -> Result<String, std::fmt::Error> {
         let out = String::new();
-        disassemble_chunk(out, self, name)
+        disassemble_chunk(out, self, name.into().as_str())
     }
 
     pub fn len(&self) -> usize {
@@ -68,14 +70,15 @@ pub fn disassemble_chunk(
     chunk: &Chunk,
     name: &str,
 ) -> Result<String, std::fmt::Error> {
-    writeln!(out, "\t>--\t>{}<", name.to_uppercase())?;
+    writeln!(out, "     >--< {}", name)?;
 
     let mut offset = 0;
     while offset < chunk.code.len() {
         offset += disassemble_instruction(&mut out, chunk, offset)?;
+        writeln!(out)?;
     }
 
-    writeln!(out, "\t>--")?;
+    writeln!(out, "     >--<")?;
 
     Ok(out)
 }
@@ -88,12 +91,13 @@ pub fn disassemble_instruction(
     let op = chunk.get_op(offset);
 
     if offset > 0 && chunk.lines[offset] == chunk.lines[offset - 1] {
-        write!(out, "\t")?;
+        write!(out, "{:<5}", "")?;
     } else {
-        write!(out, "{}\t", chunk.lines[offset])?;
+        write!(out, "{:<5}", chunk.lines[offset].to_string().blue())?;
     }
 
-    write!(out, "{:04} {}", offset, op)?;
+    write!(out, "{} ", format!("{:04}", offset).green())?;
+
     let operands = match op {
         OpCode::Constant(opr)
         | OpCode::DefineGlobal(opr)
@@ -105,12 +109,19 @@ pub fn disassemble_instruction(
         | OpCode::JumpIfFalse(opr)
         | OpCode::Loop(opr) => Value::Number(opr as f64),
         _ => {
-            writeln!(out)?;
+            write!(out, "{:<25}", op.to_string().blue())?;
             return Ok(1);
         }
     };
 
-    writeln!(out, "( {} )", operands)?;
+    let op = op.to_string();
+    let operands = operands.to_string();
+
+    write!(out, "{}[{}]", op.blue(), operands.green())?;
+
+    // manual padding for color output
+    // + 2 for the additional []
+    write!(out, "{}", " ".repeat(25 - (op.len() + operands.len() + 2)))?;
 
     Ok(1)
 }
