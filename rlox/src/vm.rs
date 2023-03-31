@@ -5,7 +5,7 @@ pub mod value;
 
 use crate::error::*;
 use colored::Colorize;
-use std::{collections::HashMap, ops::Deref, rc::Rc};
+use std::{collections::HashMap, ops::Deref, rc::Rc, result};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -13,7 +13,7 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::Function;
+use self::object::{Function, Native, NativeFun, NativeFunction, Obj};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -25,13 +25,13 @@ macro_rules! stack_operands {
     };
 }
 
-pub struct Vm<'a> {
+pub struct Vm {
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
-    frames: Vec<CallFrame<'a>>,
+    frames: Vec<CallFrame>,
 }
 
-impl<'a> Vm<'a> {
+impl Vm {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
@@ -40,28 +40,33 @@ impl<'a> Vm<'a> {
         }
     }
 
-    pub fn call(&mut self, function: &'a Function, arg_count: usize) -> Result<()> {
+    pub fn call(&mut self, function: Function, arg_count: usize) -> Result<()> {
+        let rc = Rc::new(function);
         self.frames
-            .push(CallFrame::new(function, self.stack.len() - arg_count));
-        self.run(function)
+            .push(CallFrame::new(rc.clone(), self.stack.len() - arg_count));
+        self.stack.push(Value::Obj(Obj::Fun(rc)));
+
+        self.run()
     }
 
-    fn run(&mut self, function: &Function) -> Result<()> {
-        let chunk = &function.chunk;
-        let mut frame = self.frames.last_mut().unwrap();
+    fn run(&mut self) -> Result<()> {
+        let mut frame = self.frames.last_mut().unwrap().clone();
+        let mut chunk = &frame.function.chunk;
+        let mut exit = false;
 
-        loop {
-            let last_ip = frame.ip;
+        while !exit {
+            let absolute_ip = frame.slot + frame.ip;
             let instruction: OpCode = chunk.get_op(frame.ip);
+            let mut ip_offset = 1;
 
             if cfg!(debug_trace_execution) {
                 let mut out = String::new();
-                disassemble_instruction(&mut out, chunk, last_ip).unwrap();
+                disassemble_instruction(&mut out, chunk, frame.ip).unwrap();
 
                 print!("{}|", out);
 
                 for value in &self.stack {
-                    print!(" {}, ", value.to_string().green());
+                    print!(" {}, ", value.to_string().replace('\n', "\\n").green());
                 }
                 println!("|");
             }
@@ -71,15 +76,22 @@ impl<'a> Vm<'a> {
                     let constant = chunk.get_constant(opr as usize);
                     self.stack.push(constant);
                 }
-                OpCode::Nil => self.stack.push(Value::Nil),
-                OpCode::True => self.stack.push(Value::Bool(true)),
-                OpCode::False => self.stack.push(Value::Bool(false)),
+                OpCode::Nil => {
+                    self.stack.push(Value::Nil);
+                }
+                OpCode::True => {
+                    self.stack.push(Value::Bool(true));
+                }
+                OpCode::False => {
+                    self.stack.push(Value::Bool(false));
+                }
                 OpCode::Pop => {
                     self.stack.pop();
                 }
-                OpCode::GetLocal(opr) => self
-                    .stack
-                    .push(self.stack[opr as usize + frame.slot].clone()),
+                OpCode::GetLocal(opr) => {
+                    self.stack
+                        .push(self.stack[opr as usize + frame.slot].clone());
+                }
                 OpCode::SetLocal(opr) => {
                     self.stack[opr as usize + frame.slot] = self.stack.last().unwrap().clone();
                 }
@@ -90,7 +102,7 @@ impl<'a> Vm<'a> {
                         self.stack.push(val.clone());
                     } else {
                         let msg = format!("Undefined variable {}", name);
-                        return Err(Error::Runtime(msg, chunk.get_line(frame.ip + frame.slot)));
+                        return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
                     }
                 }
                 OpCode::DefineGlobal(opr) => {
@@ -108,7 +120,7 @@ impl<'a> Vm<'a> {
                     {
                         self.globals.remove(&name);
                         let msg = format!("Undefined variable {}", name);
-                        return Err(Error::Runtime(msg, chunk.get_line(frame.ip + frame.slot)));
+                        return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
                     }
                 }
                 OpCode::Equal => {
@@ -164,61 +176,116 @@ impl<'a> Vm<'a> {
                     }
                 }
                 OpCode::Jump(offset) => {
-                    //self.ip += offset - 1;
-                    frame.ip += offset - 1;
+                    frame.ip += offset;
+                    ip_offset = 0;
                 }
                 OpCode::JumpIfFalse(offset) => {
                     if self.stack.last().unwrap().is_falsey() {
-                        frame.ip += offset - 1;
+                        frame.ip += offset;
+                        ip_offset = 0;
                     }
                 }
                 OpCode::Loop(offset) => {
-                    frame.ip -= offset + 1;
+                    frame.ip -= offset;
+                    ip_offset = 0;
                 }
-                OpCode::Call(count) => {
-                    if self.call_value(frame.slot + count, count).is_err() {
-                        return Err(Error::Runtime(
-                            "Call Failed".to_string(),
-                            chunk.get_line(frame.ip + frame.slot),
-                        ));
-                    }
+                OpCode::Call(arg_count) => {
+                    let len = self.frames.len();
+                    frame.ip += 1;
+                    self.frames[len - 1] = frame.clone();
 
-                    frame = self.frames.last_mut().unwrap();
+                    self.call_value(arg_count, chunk, frame.ip)?;
+                    frame = self.frames.last_mut().unwrap().clone();
+                    chunk = &frame.function.chunk;
+                    ip_offset = 0;
                 }
                 OpCode::Return => {
-                    return Ok(());
+                    stack_operands!(self.stack, result);
+
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        self.stack.pop();
+                        exit = true;
+                    } else {
+                        self.stack.truncate(frame.slot);
+                        self.stack.push(result);
+
+                        frame = self.frames.last().unwrap().clone();
+                        if cfg!(debug_trace_execution) {
+                            println!("     Returned to: {}[{:04}]", frame.function, frame.ip);
+                        }
+                        chunk = &frame.function.chunk;
+                    }
+
+                    ip_offset = 0;
                 }
             }
 
-            frame.ip += 1;
+            frame.ip += ip_offset;
+        }
+
+        Ok(())
+    }
+
+    fn call_value(&mut self, arg_count: usize, chunk: &Chunk, ip: usize) -> Result<()> {
+        let index = self.stack.len() - arg_count - 1;
+        let callee = &self.stack[index];
+
+        match callee {
+            Value::Obj(object::Obj::Fun(func)) => {
+                if func.arity != arg_count {
+                    return Err(Error::Runtime(
+                        format!("Expected {} arguments but got {}.", func.arity, arg_count),
+                        func.chunk.get_line(0),
+                    ));
+                }
+
+                self.frames.push(CallFrame::new(func.clone(), index));
+
+                if cfg!(debug_trace_execution) {
+                    println!("     Called: {}()", func);
+                }
+                Ok(())
+            }
+            Value::Obj(object::Obj::NativeFun(func)) => {
+                let result = func.call(&self.stack[index + 1..])?;
+                self.stack.truncate(index);
+                self.stack.push(result);
+                Ok(())
+            }
+            _ => Err(Error::Runtime(
+                "Call Failed".to_string(),
+                chunk.get_line(ip),
+            )),
         }
     }
 
-    fn call_value(&mut self, callee: usize, arg_count: usize) -> Result<()> {
-        match &self.stack[callee] {
-            Value::Obj(object::Obj::Function(func)) => {
-                return self.call(&func, arg_count);
-            }
-            _ => {}
-        }
-        Err(Error::Runtime("".to_string(), 0))
+    pub fn define_native(
+        &mut self,
+        name: impl Into<String>,
+        function: Box<dyn NativeFun>,
+    ) -> &mut Self {
+        self.globals
+            .insert(name.into(), Value::Obj(Obj::NativeFun(Rc::new(function))));
+        self
     }
 }
 
-impl Default for Vm<'_> {
+impl Default for Vm {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct CallFrame<'a> {
-    function: &'a Function,
+#[derive(Clone)]
+pub struct CallFrame {
+    function: Rc<Function>,
     ip: usize,
     slot: usize,
 }
 
-impl<'a> CallFrame<'a> {
-    pub fn new(function: &'a Function, slot: usize) -> CallFrame {
+impl CallFrame {
+    pub fn new(function: Rc<Function>, slot: usize) -> CallFrame {
         CallFrame {
             function,
             ip: 0,

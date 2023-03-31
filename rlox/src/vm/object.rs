@@ -1,18 +1,21 @@
 use std::{fmt::Display, ops::Add, rc::Rc, string::String};
 
-use super::chunk::Chunk;
+use super::{chunk::Chunk, value::Value};
+use crate::error::Error;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Obj {
     String(String),
-    Function(Function),
+    Fun(Rc<Function>),
+    NativeFun(Rc<Box<dyn NativeFun>>),
 }
 
 impl Display for Obj {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Obj::String(v) => v.clone(),
-            Obj::Function(v) => v.to_string(),
+            Obj::Fun(v) => v.to_string(),
+            Obj::NativeFun(v) => v.to_string(),
+            Obj::String(v) => v.to_string(),
         };
         write!(f, "{}", s)
     }
@@ -33,14 +36,12 @@ impl Add for Obj {
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Obj::String(l0), Obj::String(r0)) => Some(Obj::String(l0 + &r0)),
-            (Obj::String(_), Obj::Function(_)) => None,
-            (Obj::Function(_), Obj::String(_)) => None,
-            (Obj::Function(_), Obj::Function(_)) => None,
+            _ => None,
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default)]
 pub struct Function {
     pub name: String,
     pub arity: usize,
@@ -67,12 +68,24 @@ impl Display for Function {
     }
 }
 
-impl Default for Function {
-    fn default() -> Self {
-        Self {
-            name: Default::default(),
-            arity: Default::default(),
-            chunk: Default::default(),
-        }
+pub type NativeFunction = &'static dyn Fn(&[Value]) -> Value;
+
+#[derive(Clone)]
+pub struct Native {
+    pub function: NativeFunction,
+}
+
+impl Native {
+    pub fn new(function: NativeFunction) -> Self {
+        Self { function }
+    }
+}
+pub trait NativeFun {
+    fn call(&self, args: &[Value]) -> Result<Value, Error>;
+}
+
+impl Display for Box<dyn NativeFun> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<native fn>")
     }
 }

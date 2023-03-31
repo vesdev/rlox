@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::vm::{opcode::OpCode, value::Value};
 use colored::Colorize;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Chunk {
     code: Vec<OpCode>,
     constants: Vec<Value>,
@@ -33,10 +33,12 @@ impl Chunk {
         self.code[index] = op;
     }
 
+    #[inline]
     pub fn get_op(&self, index: usize) -> OpCode {
         self.code[index]
     }
 
+    #[inline]
     pub fn get_constant(&self, index: usize) -> Value {
         self.constants[index].clone()
     }
@@ -107,7 +109,8 @@ pub fn disassemble_instruction(
         | OpCode::SetLocal(opr)
         | OpCode::Jump(opr)
         | OpCode::JumpIfFalse(opr)
-        | OpCode::Loop(opr) => Value::Number(opr as f64),
+        | OpCode::Loop(opr)
+        | OpCode::Call(opr) => Value::Number(opr as f64),
         _ => {
             write!(out, "{:<25}", op.to_string().blue())?;
             return Ok(1);
@@ -117,7 +120,12 @@ pub fn disassemble_instruction(
     let op = op.to_string();
     let operands = operands.to_string();
 
-    write!(out, "{}[{}]", op.blue(), operands.green())?;
+    write!(
+        out,
+        "{}[{}]",
+        op.blue(),
+        operands.replace('\n', "\\n").green()
+    )?;
 
     // manual padding for color output
     // + 2 for the additional []

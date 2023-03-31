@@ -54,12 +54,17 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn new(source: &'a str, kind: FunctionKind) -> Self {
-        Self {
+        let mut result = Self {
             state: State::new(source),
             panic_mode: false,
             scope: FunctionScope::new("", kind),
             errors: Vec::new(),
-        }
+        };
+        result
+            .scope
+            .locals
+            .push(Local::new(Token::new(TokenKind::Fun, "", 0), 0));
+        result
     }
 
     fn advance(&mut self) {
@@ -94,12 +99,6 @@ impl<'a> Compiler<'a> {
 
         self.advance();
         true
-    }
-
-    fn current_kind(&mut self) -> TokenKind {
-        let kind = self.state.current.kind;
-        self.advance();
-        kind
     }
 
     fn end(&mut self) -> Result<Function, Vec<Error>> {
@@ -153,6 +152,7 @@ impl<'a> Compiler<'a> {
                 self.error("Invalid assignment target.");
             }
         } else {
+            println!("{:?}", self.state.current.kind);
             self.error_at_current("Expect expression.")
         }
     }
@@ -298,7 +298,7 @@ impl<'a> Compiler<'a> {
 
         match compiler.end() {
             Ok(result) => {
-                let func = self.make_constant(Value::Obj(Obj::Function(result)));
+                let func = self.make_constant(Value::Obj(Obj::Fun(Rc::new(result))));
                 self.emit_op(OpCode::Constant(func));
             }
             Err(mut e) => {
@@ -420,6 +420,20 @@ impl<'a> Compiler<'a> {
         self.emit_op(OpCode::Print);
     }
 
+    fn return_statement(&mut self) {
+        if self.scope.kind == FunctionKind::Script {
+            self.error("Can't return from top-level code.");
+        }
+
+        if self.matches(TokenKind::Semicolon) {
+            self.emit_return();
+        } else {
+            self.expression();
+            self.consume(TokenKind::Semicolon, "Expect ';' after return value.");
+            self.emit_op(OpCode::Return);
+        }
+    }
+
     fn while_statement(&mut self) {
         let loop_start = self.current_chunk().len();
         self.consume(TokenKind::LeftParen, "Expect '(' after 'while'.");
@@ -462,17 +476,22 @@ impl<'a> Compiler<'a> {
     }
 
     fn statement(&mut self) {
-        match self.current_kind() {
-            TokenKind::Print => self.print_statement(),
-            TokenKind::For => self.for_statement(),
-            TokenKind::If => self.if_statement(),
-            TokenKind::While => self.while_statement(),
-            TokenKind::LeftBrace => {
-                self.begin_scope();
-                self.block();
-                self.end_scope();
-            }
-            _ => self.expression_statement(),
+        if self.matches(TokenKind::Print) {
+            self.print_statement();
+        } else if self.matches(TokenKind::For) {
+            self.for_statement();
+        } else if self.matches(TokenKind::If) {
+            self.if_statement();
+        } else if self.matches(TokenKind::Return) {
+            self.return_statement();
+        } else if self.matches(TokenKind::While) {
+            self.while_statement();
+        } else if self.matches(TokenKind::LeftBrace) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
+        } else {
+            self.expression_statement()
         }
     }
 
@@ -517,6 +536,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn emit_return(&mut self) {
+        self.emit_op(OpCode::Nil);
         self.emit_op(OpCode::Return)
     }
 
@@ -561,7 +581,7 @@ impl<'a> Compiler<'a> {
         self.panic_mode = true;
 
         let mut out = String::new();
-        write!(out, "[line {}] Error", token.line).unwrap();
+        write!(out, "[line {}, {}] Error", token.line, self.scope.function).unwrap();
 
         if token.kind == TokenKind::Eof {
             write!(out, " at end").unwrap();
@@ -675,9 +695,14 @@ fn literal(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn string(compiler: &mut Compiler, _can_assign: bool) {
-    compiler.emit_constant(Value::Obj(Obj::String(String::from(
-        compiler.state.previous.lexeme.trim_matches('"'),
-    ))))
+    compiler.emit_constant(Value::Obj(Obj::String(
+        compiler
+            .state
+            .previous
+            .lexeme
+            .trim_matches('"')
+            .replace("\\n", "\n"),
+    )))
 }
 
 fn variable(compiler: &mut Compiler, can_assign: bool) {

@@ -6,7 +6,7 @@ use std::{
 
 use super::object::*;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Value {
     Number(f64),
     Nil,
