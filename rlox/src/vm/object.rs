@@ -6,7 +6,7 @@ use crate::error::Error;
 #[derive(Clone)]
 pub enum Obj {
     String(String),
-    Fun(Rc<Function>),
+    Fun(Rc<Fun>),
     NativeFun(Rc<Box<dyn NativeFun>>),
 }
 
@@ -42,13 +42,13 @@ impl Add for Obj {
 }
 
 #[derive(Clone, Default)]
-pub struct Function {
+pub struct Fun {
     pub name: String,
     pub arity: usize,
     pub chunk: Chunk,
 }
 
-impl Function {
+impl Fun {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -58,7 +58,7 @@ impl Function {
     }
 }
 
-impl Display for Function {
+impl Display for Fun {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.name.is_empty() {
             write!(f, "<script>")

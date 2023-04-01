@@ -42,7 +42,7 @@ pub struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    pub fn compile(&mut self) -> Result<Function, Vec<Error>> {
+    pub fn compile(&mut self) -> Result<Fun, Vec<Error>> {
         self.panic_mode = false;
         self.advance();
 
@@ -101,7 +101,7 @@ impl<'a> Compiler<'a> {
         true
     }
 
-    fn end(&mut self) -> Result<Function, Vec<Error>> {
+    fn end(&mut self) -> Result<Fun, Vec<Error>> {
         self.emit_return();
 
         if cfg!(debug_print_code) {
@@ -814,7 +814,7 @@ pub enum FunctionKind {
 }
 
 struct FunctionScope<'a> {
-    function: Function,
+    function: Fun,
     kind: FunctionKind,
 
     locals: Vec<Local<'a>>,
@@ -826,7 +826,7 @@ impl FunctionScope<'_> {
         Self {
             locals: Vec::new(),
             scope_depth: 0,
-            function: Function::new(function_name),
+            function: Fun::new(function_name),
             kind,
         }
     }

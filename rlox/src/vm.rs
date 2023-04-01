@@ -13,7 +13,7 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::{Function, Native, NativeFun, NativeFunction, Obj};
+use self::object::{Fun, NativeFun, Obj};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -40,7 +40,7 @@ impl Vm {
         }
     }
 
-    pub fn call(&mut self, function: Function, arg_count: usize) -> Result<()> {
+    pub fn call(&mut self, function: Fun, arg_count: usize) -> Result<()> {
         let rc = Rc::new(function);
         self.frames
             .push(CallFrame::new(rc.clone(), self.stack.len() - arg_count));
@@ -279,13 +279,13 @@ impl Default for Vm {
 
 #[derive(Clone)]
 pub struct CallFrame {
-    function: Rc<Function>,
+    function: Rc<Fun>,
     ip: usize,
     slot: usize,
 }
 
 impl CallFrame {
-    pub fn new(function: Rc<Function>, slot: usize) -> CallFrame {
+    pub fn new(function: Rc<Fun>, slot: usize) -> CallFrame {
         CallFrame {
             function,
             ip: 0,
