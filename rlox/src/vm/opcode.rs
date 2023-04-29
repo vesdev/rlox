@@ -13,6 +13,8 @@ pub enum OpCode {
     GetGlobal(usize),
     DefineGlobal(usize),
     SetGlobal(usize),
+    SetUpValue(usize),
+    GetUpValue(usize),
 
     Equal,
     Greater,
@@ -29,6 +31,7 @@ pub enum OpCode {
     JumpIfFalse(usize),
     Loop(usize),
     Call(usize),
+    Closure(usize),
 
     Return,
 }
@@ -57,6 +60,7 @@ impl OpCode {
             | OpCode::SetLocal(_)
             | OpCode::Jump(_)
             | OpCode::JumpIfFalse(_)
+            | OpCode::Closure(_)
             | OpCode::Loop(_) => 1,
             _ => 0,
         }

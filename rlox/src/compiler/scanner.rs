@@ -27,7 +27,7 @@ impl<'a> Scanner<'a> {
         if c.is_alphabetic() {
             return self.identifier();
         }
-        if c.is_digit(10) {
+        if c.is_ascii_digit() {
             return self.number();
         }
 
@@ -145,23 +145,23 @@ impl<'a> Scanner<'a> {
     }
 
     fn number(&mut self) -> Token<'a> {
-        while !self.is_at_end() && self.peek().is_digit(10) {
+        while !self.is_at_end() && self.peek().is_ascii_digit() {
             self.advance();
         }
 
-        if !self.is_at_end() && self.peek() == '.' && self.peek_next().is_digit(10) {
+        if !self.is_at_end() && self.peek() == '.' && self.peek_next().is_ascii_digit() {
             self.advance();
 
-            while self.peek().is_digit(10) {
+            while self.peek().is_ascii_digit() {
                 self.advance();
             }
         }
 
-        return self.make_token(TokenKind::Number);
+        self.make_token(TokenKind::Number)
     }
 
     fn identifier(&mut self) -> Token<'a> {
-        while self.peek().is_alphabetic() || self.peek().is_digit(10) {
+        while self.peek().is_alphabetic() || self.peek().is_ascii_digit() {
             self.advance();
         }
         self.make_token(self.identifier_type())
@@ -191,17 +191,6 @@ impl<'a> Scanner<'a> {
     }
 }
 
-impl Default for Scanner<'_> {
-    fn default() -> Self {
-        Self {
-            source: Default::default(),
-            start: Default::default(),
-            current: Default::default(),
-            line: Default::default(),
-        }
-    }
-}
-
 //copy pasted LULE
 #[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {
@@ -216,7 +205,7 @@ impl<'a> Token<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     LeftParen, // Single-character tokens.
     RightParen,

@@ -1,7 +1,6 @@
 use std::{
     fmt::Display,
     ops::{Add, Div, Mul, Neg, Not, Sub},
-    rc::Rc,
 };
 
 use super::object::*;

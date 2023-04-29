@@ -1,25 +1,69 @@
+use crate::compiler::scanner::*;
+use crate::error::*;
 use crate::vm::chunk::*;
+use crate::vm::object::*;
+use crate::vm::opcode::OpCode;
 use crate::vm::value::Value;
-
 use std::fmt::Write;
 use std::rc::Rc;
 
 mod scanner;
-use crate::compiler::scanner::*;
-use crate::error::*;
-use crate::vm::object::*;
-use crate::vm::opcode::OpCode;
 
 pub struct State<'a> {
+    panic_mode: bool,
+    function: Fun,
+    kind: FunctionKind,
+    scope_depth: isize,
+    locals: Vec<Local<'a>>,
+    upvalues: Vec<UpValue>,
+    errors: Vec<Error>,
+}
+
+impl<'a> State<'a> {
+    pub fn new(function_name: impl Into<String>, kind: FunctionKind) -> Self {
+        Self {
+            panic_mode: false,
+            errors: Vec::new(),
+
+            locals: Vec::new(),
+            scope_depth: 0,
+            function: Fun::new(function_name.into()),
+            kind,
+            upvalues: Vec::new(),
+        }
+    }
+
+    fn chunk(&mut self) -> &mut Chunk {
+        &mut self.function.chunk
+    }
+}
+
+pub struct Compiler<'a> {
+    states: Vec<State<'a>>,
     scanner: Scanner<'a>,
     previous: Token<'a>,
     current: Token<'a>,
 }
 
-impl<'a> State<'a> {
-    pub fn new(source: &'a str) -> Self {
+impl<'a> Compiler<'a> {
+    pub fn compile(&mut self) -> Result<Fun, Vec<Error>> {
+        self.state().panic_mode = false;
+        self.advance();
+
+        while !self.matches(TokenKind::Eof) {
+            self.declaration();
+        }
+
+        self.end()
+    }
+
+    pub fn new(source: &'a str, mut state: State<'a>) -> Compiler<'a> {
+        state
+            .locals
+            .push(Local::new(Token::new(TokenKind::Fun, "", 0), 0));
         Self {
             scanner: Scanner::new(source),
+            states: vec![state],
             previous: Token {
                 kind: TokenKind::Error,
                 lexeme: "n/a",
@@ -32,55 +76,33 @@ impl<'a> State<'a> {
             },
         }
     }
-}
 
-pub struct Compiler<'a> {
-    state: State<'a>,
-    scope: FunctionScope<'a>,
-    panic_mode: bool,
-    errors: Vec<Error>,
-}
-
-impl<'a> Compiler<'a> {
-    pub fn compile(&mut self) -> Result<Fun, Vec<Error>> {
-        self.panic_mode = false;
-        self.advance();
-
-        while !self.matches(TokenKind::Eof) {
-            self.declaration();
-        }
-
-        self.end()
+    pub fn state(&mut self) -> &mut State<'a> {
+        self.states.last_mut().unwrap()
     }
 
-    pub fn new(source: &'a str, kind: FunctionKind) -> Self {
-        let mut result = Self {
-            state: State::new(source),
-            panic_mode: false,
-            scope: FunctionScope::new("", kind),
-            errors: Vec::new(),
-        };
-        result
-            .scope
-            .locals
-            .push(Local::new(Token::new(TokenKind::Fun, "", 0), 0));
-        result
+    pub fn state_ref(&self) -> &State<'a> {
+        self.states.last().unwrap()
+    }
+
+    pub fn state_enclosing(&mut self) -> &mut State<'a> {
+        self.states.last_mut().unwrap()
     }
 
     fn advance(&mut self) {
-        self.state.previous = self.state.current;
+        self.previous = self.current;
 
         loop {
-            self.state.current = self.state.scanner.scan_token();
+            self.current = self.scanner.scan_token();
 
-            if self.state.current.kind != TokenKind::Error {
+            if self.current.kind != TokenKind::Error {
                 break;
             }
         }
     }
 
     fn consume(&mut self, kind: TokenKind, message: impl Into<String>) {
-        if self.state.current.kind == kind {
+        if self.current.kind == kind {
             self.advance();
             return;
         }
@@ -89,7 +111,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn check(&mut self, kind: TokenKind) -> bool {
-        self.state.current.kind == kind
+        self.current.kind == kind
     }
 
     fn matches(&mut self, kind: TokenKind) -> bool {
@@ -106,44 +128,44 @@ impl<'a> Compiler<'a> {
 
         if cfg!(debug_print_code) {
             let mut name = "Entry Point".to_string();
-            if !self.scope.function.name.is_empty() {
-                name = self.scope.function.name.clone();
+            if !self.state().function.name.is_empty() {
+                name = self.state().function.name.clone();
             }
-            println!("{}", self.current_chunk().disassemble(name).unwrap());
+            println!("{}", self.state().chunk().disassemble(name).unwrap());
         }
 
-        if !self.errors.is_empty() {
-            return Err(std::mem::take(&mut self.errors));
+        if !self.state().errors.is_empty() {
+            return Err(std::mem::take(&mut self.state().errors));
         }
-        Ok(std::mem::take(&mut self.scope.function))
+        Ok(std::mem::take(&mut self.state().function))
     }
 
     fn begin_scope(&mut self) {
-        self.scope.scope_depth += 1;
+        self.state().scope_depth += 1;
     }
 
     fn end_scope(&mut self) {
-        self.scope.scope_depth -= 1;
+        self.state().scope_depth -= 1;
 
-        while !self.scope.locals.is_empty()
-            && self.scope.locals[self.scope.locals.len() - 1].depth > self.scope.scope_depth
+        while !self.state().locals.is_empty()
+            && self.state().locals.last().unwrap().depth > self.state().scope_depth
         {
             self.emit_op(OpCode::Pop);
-            self.scope.locals.pop();
+            self.state().locals.pop();
         }
     }
 
     fn parse_precedence(&mut self, precendence: Precedence) {
         self.advance();
 
-        if let Some(prefix) = get_rule(self.state.previous.kind).prefix {
+        if let Some(prefix) = get_rule(self.previous.kind).prefix {
             let can_assign = precendence <= Precedence::Assignment;
             prefix(self, can_assign);
 
-            while precendence <= get_rule(self.state.current.kind).precedence {
+            while precendence <= get_rule(self.current.kind).precedence {
                 self.advance();
 
-                if let Some(infix) = get_rule(self.state.previous.kind).infix {
+                if let Some(infix) = get_rule(self.previous.kind).infix {
                     infix(self, can_assign);
                 }
             }
@@ -152,7 +174,7 @@ impl<'a> Compiler<'a> {
                 self.error("Invalid assignment target.");
             }
         } else {
-            println!("{:?}", self.state.current.kind);
+            println!("{:?}", self.current.kind);
             self.error_at_current("Expect expression.")
         }
     }
@@ -161,44 +183,78 @@ impl<'a> Compiler<'a> {
         self.make_constant(Value::Obj(Obj::String(name.lexeme.to_string())))
     }
 
-    fn identifiers_equal(&mut self, a: Token, b: Token) -> bool {
+    fn identifiers_equal(a: Token, b: Token) -> bool {
         a.lexeme == b.lexeme
     }
 
-    fn resolve_local(&mut self, name: Token) -> isize {
-        for i in (0..self.scope.locals.len()).rev() {
-            let local = self.scope.locals[i].clone();
-            if self.identifiers_equal(name, local.name) {
+    fn resolve_local(state: &mut State, name: Token) -> Option<usize> {
+        for i in (0..state.locals.len()).rev() {
+            let local = state.locals[i].clone();
+            if Self::identifiers_equal(name, local.name) {
                 if local.depth == -1 {
-                    self.error("Can't read local variable in its own initializer.");
+                    return None;
                 }
-                return i as isize;
+                return Some(i);
             }
         }
 
-        -1
+        None
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
+        //TODO: get rid of self.state() here since upvalues can be added to any state
+        //not only the current one
+        let upvalue_count = self.state().function.upvalue_count;
+
+        for i in 0..upvalue_count {
+            let up_value = &self.state().upvalues[i];
+            if up_value.index == index && up_value.is_local == is_local {
+                return i;
+            }
+        }
+
+        self.state().upvalues[upvalue_count].is_local = is_local;
+        self.state().upvalues[upvalue_count].index = index;
+        self.state().function.upvalue_count += 1;
+        self.state().function.upvalue_count
+    }
+
+    fn resolve_upvalue(&mut self, state_index: usize, name: Token) -> Option<usize> {
+        if state_index == 0 {
+            return None;
+        }
+
+        let local = Self::resolve_local(&mut self.states[state_index - 1], name)
+            .map(|local| self.add_upvalue(local, true));
+
+        if local.is_some() {
+            return local;
+        }
+
+        self.resolve_upvalue(state_index - 1, name)
+            .map(|up_value| self.add_upvalue(up_value, false))
     }
 
     fn add_local(&mut self, name: Token<'a>) {
-        let local = Local::new(name, self.scope.scope_depth);
-        self.scope.locals.push(local);
+        let local = Local::new(name, self.state().scope_depth);
+        self.state().locals.push(local);
     }
 
     fn declare_variable(&mut self) {
-        if self.scope.scope_depth == 0 {
+        if self.state().scope_depth == 0 {
             return;
         }
 
-        let name = self.state.previous;
+        let name = self.previous;
 
-        for i in (0..self.scope.locals.len()).rev() {
-            let local = &self.scope.locals[i];
+        for i in (0..self.state().locals.len()).rev() {
+            let local = &self.state_ref().locals[i];
 
-            if local.depth != -1 && local.depth < self.scope.scope_depth {
+            if local.depth != -1 && local.depth < self.state_ref().scope_depth {
                 break;
             }
 
-            if self.identifiers_equal(name, local.name) {
+            if Self::identifiers_equal(name, local.name) {
                 return self.error("Already a variable with this name in this scope.");
             }
         }
@@ -210,23 +266,23 @@ impl<'a> Compiler<'a> {
         self.consume(TokenKind::Identifier, message);
 
         self.declare_variable();
-        if self.scope.scope_depth > 0 {
+        if self.state().scope_depth > 0 {
             return 0;
         }
 
-        self.identifier_constant(self.state.previous)
+        self.identifier_constant(self.previous)
     }
 
     fn mark_initialized(&mut self) {
-        if self.scope.scope_depth == 0 {
+        if self.state().scope_depth == 0 {
             return;
         }
-        let index = self.scope.locals.len() - 1;
-        self.scope.locals[index].depth = self.scope.scope_depth;
+        let index = self.state().locals.len() - 1;
+        self.state().locals[index].depth = self.state().scope_depth;
     }
 
     fn define_variable(&mut self, global: usize) {
-        if self.scope.scope_depth > 0 {
+        if self.state().scope_depth > 0 {
             self.mark_initialized();
             return;
         }
@@ -265,49 +321,47 @@ impl<'a> Compiler<'a> {
     }
 
     fn function(&mut self, kind: FunctionKind) {
-        let mut compiler = Compiler::new("", kind);
-        compiler.scope.function.name = self.state.previous.lexeme.to_string();
-        //hijack the new compilers state and swap it with out current one
-        //then swap back once done parsing funciton body
-        std::mem::swap(&mut compiler.state, &mut self.state);
+        self.states
+            .push(State::new(self.previous.lexeme.to_string(), kind));
+        self.begin_scope();
 
-        compiler.begin_scope();
-
-        compiler.consume(TokenKind::LeftParen, "Expect '(' after function name.");
-        if !compiler.check(TokenKind::RightParen) {
+        self.consume(TokenKind::LeftParen, "Expect '(' after function name.");
+        if !self.check(TokenKind::RightParen) {
             loop {
-                compiler.scope.function.arity += 1;
+                self.state().function.arity += 1;
 
-                if compiler.scope.function.arity > 256 {
-                    compiler.error_at_current("Can't have more than 255 parameters.");
+                if self.state().function.arity > 256 {
+                    self.error_at_current("Can't have more than 255 parameters.");
                 }
 
-                let constant = compiler.parse_variable("Expect parameter name.");
-                compiler.define_variable(constant);
+                let constant = self.parse_variable("Expect parameter name.");
+                self.define_variable(constant);
 
-                if !compiler.matches(TokenKind::Comma) {
+                if !self.matches(TokenKind::Comma) {
                     break;
                 }
             }
         }
 
-        compiler.consume(TokenKind::RightParen, "Expect ')' after parameters.");
-        compiler.consume(TokenKind::LeftBrace, "Expect '{' before function body.");
+        self.consume(TokenKind::RightParen, "Expect ')' after parameters.");
+        self.consume(TokenKind::LeftBrace, "Expect '{' before function body.");
 
-        compiler.block();
+        self.block();
 
-        match compiler.end() {
+        let result = self.end();
+
+        self.states.pop();
+
+        match result {
             Ok(result) => {
                 let func = self.make_constant(Value::Obj(Obj::Fun(Rc::new(result))));
-                self.emit_op(OpCode::Constant(func));
+                self.emit_op(OpCode::Closure(func));
             }
             Err(mut e) => {
-                //handle errors from nested function
-                self.errors.append(&mut e);
+                //handle self.errors from nested function
+                self.state().errors.append(&mut e);
             }
         }
-
-        std::mem::swap(&mut compiler.state, &mut self.state);
     }
 
     fn fun_declaration(&mut self) {
@@ -352,7 +406,7 @@ impl<'a> Compiler<'a> {
             self.expression_statement();
         }
 
-        let mut loop_start = self.current_chunk().len();
+        let mut loop_start = self.state().chunk().len();
 
         //condition
         let mut exit_jump = 0;
@@ -369,7 +423,7 @@ impl<'a> Compiler<'a> {
         //increment
         if !self.matches(TokenKind::RightParen) {
             let body_jump = self.emit_jump(OpCode::Jump(0));
-            let increment_start = self.current_chunk().len();
+            let increment_start = self.state().chunk().len();
 
             self.expression();
             self.emit_op(OpCode::Pop);
@@ -421,7 +475,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn return_statement(&mut self) {
-        if self.scope.kind == FunctionKind::Script {
+        if self.state().kind == FunctionKind::Script {
             self.error("Can't return from top-level code.");
         }
 
@@ -435,7 +489,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn while_statement(&mut self) {
-        let loop_start = self.current_chunk().len();
+        let loop_start = self.state().chunk().len();
         self.consume(TokenKind::LeftParen, "Expect '(' after 'while'.");
 
         self.expression();
@@ -451,13 +505,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn synchronize(&mut self) {
-        self.panic_mode = false;
+        self.state().panic_mode = false;
 
-        while self.state.current.kind != TokenKind::Eof {
-            if self.state.previous.kind == TokenKind::Semicolon {
-                return;
+        while self.current.kind != TokenKind::Eof {
+            if self.previous.kind == TokenKind::Semicolon {
+                self.state();
             }
-            match self.state.current.kind {
+            match self.current.kind {
                 TokenKind::Class
                 | TokenKind::Fun
                 | TokenKind::Var
@@ -496,7 +550,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn declaration(&mut self) {
-        // ignore errors on this level
+        // ignore self.errors on this level
         // manually synchronized after
         if self.matches(TokenKind::Fun) {
             self.fun_declaration();
@@ -506,18 +560,14 @@ impl<'a> Compiler<'a> {
             self.statement();
         }
 
-        if self.panic_mode {
+        if self.state().panic_mode {
             self.synchronize();
         }
     }
 
-    fn current_chunk(&mut self) -> &mut Chunk {
-        &mut self.scope.function.chunk
-    }
-
     fn emit_op(&mut self, op: OpCode) {
-        let line = self.state.previous.line;
-        self.current_chunk().push_op(op, line)
+        let line = self.previous.line;
+        self.state().chunk().push_op(op, line)
     }
 
     fn emit_ops(&mut self, op: OpCode, op2: OpCode) {
@@ -526,13 +576,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
-        let offset = self.current_chunk().len() - loop_start;
+        let offset = self.state().chunk().len() - loop_start;
         self.emit_op(OpCode::Loop(offset));
     }
 
     fn emit_jump(&mut self, op: OpCode) -> usize {
         self.emit_op(op);
-        self.current_chunk().len() - 1
+        self.state().chunk().len() - 1
     }
 
     fn emit_return(&mut self) {
@@ -541,7 +591,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn make_constant(&mut self, value: Value) -> usize {
-        let constant = self.current_chunk().push_constant(value);
+        let constant = self.state().chunk().push_constant(value);
 
         constant
     }
@@ -552,36 +602,43 @@ impl<'a> Compiler<'a> {
     }
 
     fn patch_jump(&mut self, offset: usize, op: OpCode) {
-        let jump = self.current_chunk().len() - offset;
+        let jump = self.state().chunk().len() - offset;
 
         match op {
             OpCode::JumpIfFalse(_) => {
-                self.current_chunk()
+                self.state()
+                    .chunk()
                     .insert_op(OpCode::JumpIfFalse(jump), offset);
             }
             OpCode::Jump(_) => {
-                self.current_chunk().insert_op(OpCode::Jump(jump), offset);
+                self.state().chunk().insert_op(OpCode::Jump(jump), offset);
             }
             _ => (),
         }
     }
 
     fn error_at_current(&mut self, message: impl Into<String>) {
-        self.error_at(self.state.current, message)
+        self.error_at(self.current, message)
     }
 
     fn error(&mut self, message: impl Into<String>) {
-        self.error_at(self.state.previous, message)
+        self.error_at(self.previous, message)
     }
 
     fn error_at(&mut self, token: Token, message: impl Into<String>) {
-        if self.panic_mode {
+        if self.state().panic_mode {
             return;
         }
-        self.panic_mode = true;
+        self.state().panic_mode = true;
 
         let mut out = String::new();
-        write!(out, "[line {}, {}] Error", token.line, self.scope.function).unwrap();
+        write!(
+            out,
+            "[line {}, {}] Error",
+            token.line,
+            self.state().function
+        )
+        .unwrap();
 
         if token.kind == TokenKind::Eof {
             write!(out, " at end").unwrap();
@@ -593,7 +650,7 @@ impl<'a> Compiler<'a> {
         writeln!(out, ": {}", message.into()).unwrap();
 
         let err = Error::Compile(out, token.line);
-        self.errors.push(err);
+        self.state().errors.push(err);
     }
 }
 
@@ -648,7 +705,7 @@ fn grouping(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn binary(compiler: &mut Compiler, _can_assign: bool) {
-    let operator_kind = compiler.state.previous.kind;
+    let operator_kind = compiler.previous.kind;
 
     let compiler_rule = get_rule(operator_kind);
     compiler.parse_precedence(compiler_rule.precedence.next());
@@ -669,12 +726,12 @@ fn binary(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn number(compiler: &mut Compiler, _can_assign: bool) {
-    let value = compiler.state.previous.lexeme.parse::<f64>().unwrap();
+    let value = compiler.previous.lexeme.parse::<f64>().unwrap();
     compiler.emit_constant(Value::Number(value))
 }
 
 fn unary(compiler: &mut Compiler, _can_assign: bool) {
-    let operator_kind = compiler.state.previous.kind;
+    let operator_kind = compiler.previous.kind;
 
     compiler.parse_precedence(Precedence::Unary);
 
@@ -686,7 +743,7 @@ fn unary(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn literal(compiler: &mut Compiler, _can_assign: bool) {
-    match compiler.state.previous.kind {
+    match compiler.previous.kind {
         TokenKind::False => compiler.emit_op(OpCode::False),
         TokenKind::Nil => compiler.emit_op(OpCode::Nil),
         TokenKind::True => compiler.emit_op(OpCode::True),
@@ -697,7 +754,6 @@ fn literal(compiler: &mut Compiler, _can_assign: bool) {
 fn string(compiler: &mut Compiler, _can_assign: bool) {
     compiler.emit_constant(Value::Obj(Obj::String(
         compiler
-            .state
             .previous
             .lexeme
             .trim_matches('"')
@@ -706,16 +762,18 @@ fn string(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn variable(compiler: &mut Compiler, can_assign: bool) {
-    named_variable(compiler, compiler.state.previous, can_assign)
+    named_variable(compiler, compiler.previous, can_assign)
 }
 
 fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) {
     let (get_op, set_op);
-    let arg = compiler.resolve_local(name);
 
-    if arg != -1 {
+    if let Some(arg) = Compiler::resolve_local(compiler.state(), name) {
         get_op = OpCode::GetLocal(arg as usize);
         set_op = OpCode::SetLocal(arg as usize);
+    } else if let Some(arg) = compiler.resolve_upvalue(name) {
+        get_op = OpCode::GetGlobal(arg as usize);
+        set_op = OpCode::SetGlobal(arg as usize);
     } else {
         let arg = compiler.identifier_constant(name);
         get_op = OpCode::GetGlobal(arg);
@@ -807,29 +865,10 @@ impl Rule {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum FunctionKind {
     Function,
     Script,
-}
-
-struct FunctionScope<'a> {
-    function: Fun,
-    kind: FunctionKind,
-
-    locals: Vec<Local<'a>>,
-    scope_depth: isize,
-}
-
-impl FunctionScope<'_> {
-    pub fn new(function_name: &str, kind: FunctionKind) -> Self {
-        Self {
-            locals: Vec::new(),
-            scope_depth: 0,
-            function: Fun::new(function_name),
-            kind,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -842,4 +881,9 @@ impl<'a> Local<'a> {
     pub fn new(name: Token<'a>, depth: isize) -> Self {
         Self { name, depth }
     }
+}
+
+pub struct UpValue {
+    pub index: usize,
+    pub is_local: bool,
 }

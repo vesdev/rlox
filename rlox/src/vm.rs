@@ -5,7 +5,7 @@ pub mod value;
 
 use crate::error::*;
 use colored::Colorize;
-use std::{collections::HashMap, ops::Deref, rc::Rc, result};
+use std::{collections::HashMap, rc::Rc};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -13,7 +13,7 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::{Fun, NativeFun, Obj};
+use self::object::{Closure, Fun, NativeFun, Obj};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -40,18 +40,18 @@ impl Vm {
         }
     }
 
-    pub fn call(&mut self, function: Fun, arg_count: usize) -> Result<()> {
-        let rc = Rc::new(function);
-        self.frames
-            .push(CallFrame::new(rc.clone(), self.stack.len() - arg_count));
-        self.stack.push(Value::Obj(Obj::Fun(rc)));
+    pub fn execute(&mut self, function: Fun) -> Result<()> {
+        let func_rc = Rc::new(function);
+        let closure_rc = Rc::new(Closure::new(func_rc));
+        self.frames.push(CallFrame::new(closure_rc.clone(), 0));
+        self.stack.push(Value::Obj(Obj::Closure(closure_rc)));
 
         self.run()
     }
 
     fn run(&mut self) -> Result<()> {
         let mut frame = self.frames.last_mut().unwrap().clone();
-        let mut chunk = &frame.function.chunk;
+        let mut chunk = &frame.closure.function.chunk;
         let mut exit = false;
 
         while !exit {
@@ -89,11 +89,10 @@ impl Vm {
                     self.stack.pop();
                 }
                 OpCode::GetLocal(opr) => {
-                    self.stack
-                        .push(self.stack[opr as usize + frame.slot].clone());
+                    self.stack.push(self.stack[frame.slot + opr].clone());
                 }
                 OpCode::SetLocal(opr) => {
-                    self.stack[opr as usize + frame.slot] = self.stack.last().unwrap().clone();
+                    self.stack[frame.slot + opr] = self.stack.last().unwrap().clone();
                 }
                 OpCode::GetGlobal(opr) => {
                     let name = chunk.get_constant(opr as usize).to_string();
@@ -196,7 +195,7 @@ impl Vm {
 
                     self.call_value(arg_count, chunk, frame.ip)?;
                     frame = self.frames.last_mut().unwrap().clone();
-                    chunk = &frame.function.chunk;
+                    chunk = &frame.closure.function.chunk;
                     ip_offset = 0;
                 }
                 OpCode::Return => {
@@ -207,18 +206,30 @@ impl Vm {
                         self.stack.pop();
                         exit = true;
                     } else {
-                        self.stack.truncate(frame.slot);
+                        self.stack.truncate(frame.slot - 1);
                         self.stack.push(result);
 
                         frame = self.frames.last().unwrap().clone();
                         if cfg!(debug_trace_execution) {
-                            println!("     Returned to: {}[{:04}]", frame.function, frame.ip);
+                            println!(
+                                "     Returned to: {}[{:04}]",
+                                frame.closure.function, frame.ip
+                            );
                         }
-                        chunk = &frame.function.chunk;
+                        chunk = &frame.closure.function.chunk;
                     }
 
                     ip_offset = 0;
                 }
+                OpCode::Closure(offset) => {
+                    let func = chunk.get_constant(offset as usize);
+                    if let Value::Obj(Obj::Fun(func)) = func {
+                        let closure = Closure::new(func);
+                        self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));
+                    }
+                }
+                OpCode::SetUpValue(_) => {}
+                OpCode::GetUpValue(_) => {}
             }
 
             frame.ip += ip_offset;
@@ -232,18 +243,21 @@ impl Vm {
         let callee = &self.stack[index];
 
         match callee {
-            Value::Obj(object::Obj::Fun(func)) => {
-                if func.arity != arg_count {
+            Value::Obj(object::Obj::Closure(closure)) => {
+                if closure.function.arity != arg_count {
                     return Err(Error::Runtime(
-                        format!("Expected {} arguments but got {}.", func.arity, arg_count),
-                        func.chunk.get_line(0),
+                        format!(
+                            "Expected {} arguments but got {}.",
+                            closure.function.arity, arg_count
+                        ),
+                        closure.function.chunk.get_line(0),
                     ));
                 }
 
-                self.frames.push(CallFrame::new(func.clone(), index));
+                self.frames.push(CallFrame::new(closure.clone(), index + 1));
 
                 if cfg!(debug_trace_execution) {
-                    println!("     Called: {}()", func);
+                    println!("     Called: {}()", closure.function);
                 }
                 Ok(())
             }
@@ -279,15 +293,15 @@ impl Default for Vm {
 
 #[derive(Clone)]
 pub struct CallFrame {
-    function: Rc<Fun>,
+    closure: Rc<Closure>,
     ip: usize,
     slot: usize,
 }
 
 impl CallFrame {
-    pub fn new(function: Rc<Fun>, slot: usize) -> CallFrame {
+    pub fn new(closure: Rc<Closure>, slot: usize) -> CallFrame {
         CallFrame {
-            function,
+            closure,
             ip: 0,
             slot,
         }

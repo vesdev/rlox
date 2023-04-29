@@ -3,6 +3,10 @@
 use clap::Parser;
 use std::io::BufRead;
 use std::path::PathBuf;
+
+use rustyline::error::ReadlineError;
+use rustyline::{DefaultEditor, Result};
+
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
 struct Cli {
@@ -11,15 +15,32 @@ struct Cli {
 }
 
 fn repl() {
-    let stdin = std::io::stdin();
+    let mut rl = DefaultEditor::new().unwrap();
+    let mut lines = String::new();
+
     loop {
-        let mut line = String::new();
-        stdin.lock().read_line(&mut line).unwrap();
-        let expr = line.as_str();
-        println!("> {}", expr);
-        if let Err(e) = rlox::run(expr) {
-            println!("ERROR: {:#?}", e);
-        }
+        let readline = rl.readline(">> ");
+        match readline {
+            Ok(line) => {
+                rl.add_history_entry(line.as_str());
+                lines.push_str(line.as_str());
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                let expr = lines.as_str();
+                if let Err(e) = rlox::run(expr) {
+                    println!("ERROR: {:#?}", e);
+                }
+                lines.clear();
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        };
     }
 }
 

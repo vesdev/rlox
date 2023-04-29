@@ -10,7 +10,7 @@ pub struct Clock {
 }
 
 impl NativeFun for Clock {
-    fn call(&self, args: &[Value]) -> std::result::Result<Value, Error> {
+    fn call(&self, _args: &[Value]) -> std::result::Result<Value, Error> {
         Ok(Value::Number(self.now.elapsed().as_secs_f64()))
     }
 }

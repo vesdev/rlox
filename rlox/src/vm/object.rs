@@ -7,6 +7,7 @@ use crate::error::Error;
 pub enum Obj {
     String(String),
     Fun(Rc<Fun>),
+    Closure(Rc<Closure>),
     NativeFun(Rc<Box<dyn NativeFun>>),
 }
 
@@ -16,6 +17,7 @@ impl Display for Obj {
             Obj::Fun(v) => v.to_string(),
             Obj::NativeFun(v) => v.to_string(),
             Obj::String(v) => v.to_string(),
+            Obj::Closure(v) => v.to_string(),
         };
         write!(f, "{}", s)
     }
@@ -46,6 +48,7 @@ pub struct Fun {
     pub name: String,
     pub arity: usize,
     pub chunk: Chunk,
+    pub upvalue_count: usize,
 }
 
 impl Fun {
@@ -54,6 +57,7 @@ impl Fun {
             name: name.into(),
             arity: 0,
             chunk: Chunk::new(),
+            upvalue_count: 0,
         }
     }
 }
@@ -69,6 +73,23 @@ impl Display for Fun {
 }
 
 pub type NativeFunction = &'static dyn Fn(&[Value]) -> Value;
+
+#[derive(Clone)]
+pub struct Closure {
+    pub function: Rc<Fun>,
+}
+
+impl Display for Closure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<closure {}>", self.function)
+    }
+}
+
+impl Closure {
+    pub fn new(function: Rc<Fun>) -> Self {
+        Self { function }
+    }
+}
 
 #[derive(Clone)]
 pub struct Native {
