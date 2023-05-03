@@ -15,7 +15,6 @@ pub struct State<'a> {
     kind: FunctionKind,
     scope_depth: isize,
     locals: Vec<Local<'a>>,
-    upvalues: Vec<UpValue>,
     errors: Vec<Error>,
 }
 
@@ -29,7 +28,6 @@ impl<'a> State<'a> {
             scope_depth: 0,
             function: Fun::new(function_name.into()),
             kind,
-            upvalues: Vec::new(),
         }
     }
 
@@ -202,37 +200,34 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
-        //TODO: get rid of self.state() here since upvalues can be added to any state
-        //not only the current one
-        let upvalue_count = self.state().function.upvalue_count;
+        let upvalue_count = self.state().function.upvalues.len();
 
         for i in 0..upvalue_count {
-            let up_value = &self.state().upvalues[i];
-            if up_value.index == index && up_value.is_local == is_local {
+            let upvalue = &self.state().function.upvalues[i];
+            if upvalue.index == index && upvalue.is_local == is_local {
                 return i;
             }
         }
 
-        self.state().upvalues[upvalue_count].is_local = is_local;
-        self.state().upvalues[upvalue_count].index = index;
-        self.state().function.upvalue_count += 1;
-        self.state().function.upvalue_count
+        self.state()
+            .function
+            .upvalues
+            .push(UpValue { index, is_local });
+        upvalue_count + 1
     }
 
     fn resolve_upvalue(&mut self, state_index: usize, name: Token) -> Option<usize> {
-        if state_index == 0 {
+        if state_index < 2 {
             return None;
         }
+        let enclosing_index = state_index - 1;
 
-        let local = Self::resolve_local(&mut self.states[state_index - 1], name)
-            .map(|local| self.add_upvalue(local, true));
-
-        if local.is_some() {
-            return local;
+        if let Some(local) = Self::resolve_local(&mut self.states[enclosing_index], name) {
+            self.add_upvalue(local, true);
+        } else if let Some(local) = self.resolve_upvalue(enclosing_index, name) {
+            self.add_upvalue(local, false);
         }
-
-        self.resolve_upvalue(state_index - 1, name)
-            .map(|up_value| self.add_upvalue(up_value, false))
+        None
     }
 
     fn add_local(&mut self, name: Token<'a>) {
@@ -358,7 +353,7 @@ impl<'a> Compiler<'a> {
                 self.emit_op(OpCode::Closure(func));
             }
             Err(mut e) => {
-                //handle self.errors from nested function
+                //handle errors from nested functions recursively
                 self.state().errors.append(&mut e);
             }
         }
@@ -769,11 +764,11 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) {
     let (get_op, set_op);
 
     if let Some(arg) = Compiler::resolve_local(compiler.state(), name) {
-        get_op = OpCode::GetLocal(arg as usize);
-        set_op = OpCode::SetLocal(arg as usize);
-    } else if let Some(arg) = compiler.resolve_upvalue(name) {
-        get_op = OpCode::GetGlobal(arg as usize);
-        set_op = OpCode::SetGlobal(arg as usize);
+        get_op = OpCode::GetLocal(arg);
+        set_op = OpCode::SetLocal(arg);
+    } else if let Some(arg) = compiler.resolve_upvalue(compiler.states.len() - 1, name) {
+        get_op = OpCode::GetGlobal(arg);
+        set_op = OpCode::SetGlobal(arg);
     } else {
         let arg = compiler.identifier_constant(name);
         get_op = OpCode::GetGlobal(arg);
@@ -881,9 +876,4 @@ impl<'a> Local<'a> {
     pub fn new(name: Token<'a>, depth: isize) -> Self {
         Self { name, depth }
     }
-}
-
-pub struct UpValue {
-    pub index: usize,
-    pub is_local: bool,
 }

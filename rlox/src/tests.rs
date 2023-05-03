@@ -1,4 +1,4 @@
-use crate::run;
+use crate::{disassemble, run};
 
 #[test]
 fn loop_2d() {
@@ -30,7 +30,7 @@ fn fib() {
     }
       
     var start = clock();
-    print fib(30);
+    print fib(20);
     print clock() - start;
 
     "#};
@@ -38,6 +38,54 @@ fn fib() {
     println!("{}", src);
 
     if let Err(e) = run(src) {
+        println!("{:#?}", e);
+        panic!();
+    }
+}
+
+#[test]
+fn upvalue() {
+    let src = indoc::indoc! {r#"
+    fun outer(n) {
+        var x = 10;
+        fun inner() {
+            print x;
+        }
+        x = x + 5;
+        return inner;
+    }
+      
+    print outer()();
+
+    "#};
+
+    println!("{}", src);
+
+    if let Err(e) = run(src) {
+        println!("{:#?}", e);
+        panic!();
+    }
+}
+
+#[test]
+fn upvalue_dissassemble() {
+    let src = indoc::indoc! {r#"
+    fun outer(n) {
+        var x = 10;
+        fun inner() {
+            print x;
+        }
+        x = x + 5;
+        return inner;
+    }
+      
+    print outer()();
+
+    "#};
+
+    println!("{}", src);
+
+    if let Err(e) = disassemble(src) {
         println!("{:#?}", e);
         panic!();
     }

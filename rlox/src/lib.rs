@@ -24,5 +24,15 @@ pub fn run(source: &str) -> Result<(), Vec<Error>> {
     Ok(())
 }
 
+pub fn disassemble(source: &str) -> Result<String, Vec<Error>> {
+    let mut compiler =
+        compiler::Compiler::new(source, State::new("", compiler::FunctionKind::Script));
+    let mut vm = Vm::new();
+    vm.define_native("clock", rlox_std::Clock::new());
+    //TODO: graceful error
+    let result = compiler.compile()?.chunk.disassemble("").unwrap();
+    Ok(result)
+}
+
 #[cfg(test)]
 pub mod tests;

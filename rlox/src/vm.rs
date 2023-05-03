@@ -73,7 +73,7 @@ impl Vm {
 
             match instruction {
                 OpCode::Constant(opr) => {
-                    let constant = chunk.get_constant(opr as usize);
+                    let constant = chunk.get_constant(opr);
                     self.stack.push(constant);
                 }
                 OpCode::Nil => {
@@ -95,7 +95,7 @@ impl Vm {
                     self.stack[frame.slot + opr] = self.stack.last().unwrap().clone();
                 }
                 OpCode::GetGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize).to_string();
+                    let name = chunk.get_constant(opr).to_string();
 
                     if let Some(val) = self.globals.get(&name) {
                         self.stack.push(val.clone());
@@ -105,12 +105,12 @@ impl Vm {
                     }
                 }
                 OpCode::DefineGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize).to_string();
+                    let name = chunk.get_constant(opr).to_string();
 
                     self.globals.insert(name, self.stack.pop().unwrap().clone());
                 }
                 OpCode::SetGlobal(opr) => {
-                    let name = chunk.get_constant(opr as usize).to_string();
+                    let name = chunk.get_constant(opr).to_string();
 
                     if self
                         .globals
@@ -136,27 +136,27 @@ impl Vm {
                 }
                 OpCode::Add => {
                     stack_operands!(self.stack, b, a);
-                    self.stack.push((a + b).unwrap());
+                    self.stack.push((a + b)?);
                 }
                 OpCode::Subtract => {
                     stack_operands!(self.stack, b, a);
-                    self.stack.push((a - b).unwrap());
+                    self.stack.push((a - b)?);
                 }
                 OpCode::Multiply => {
                     stack_operands!(self.stack, b, a);
-                    self.stack.push((a * b).unwrap());
+                    self.stack.push((a * b)?);
                 }
                 OpCode::Divide => {
                     stack_operands!(self.stack, b, a);
-                    self.stack.push((a / b).unwrap());
+                    self.stack.push((a / b)?);
                 }
                 OpCode::Not => {
                     stack_operands!(self.stack, a);
-                    self.stack.push((!a).unwrap());
+                    self.stack.push((!a)?);
                 }
                 OpCode::Negate => {
                     stack_operands!(self.stack, a);
-                    self.stack.push((-a).unwrap());
+                    self.stack.push((-a)?);
                 }
                 OpCode::Print => {
                     stack_operands!(self.stack, a);
@@ -222,7 +222,7 @@ impl Vm {
                     ip_offset = 0;
                 }
                 OpCode::Closure(offset) => {
-                    let func = chunk.get_constant(offset as usize);
+                    let func = chunk.get_constant(offset);
                     if let Value::Obj(Obj::Fun(func)) = func {
                         let closure = Closure::new(func);
                         self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));

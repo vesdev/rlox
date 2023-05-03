@@ -7,6 +7,8 @@ pub enum Error {
     Io(String),
     #[error("Runtime, {0}. Line {1}")]
     Runtime(String, usize),
+    #[error("Arithmetic, {0}")]
+    Arithmetic(String),
     #[error("Compile, {0}. Line {1}")]
     Compile(String, usize),
     #[error("Native, {0}")]

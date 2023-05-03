@@ -1,7 +1,7 @@
 use std::{fmt::Display, ops::Add, rc::Rc, string::String};
 
 use super::{chunk::Chunk, value::Value};
-use crate::error::Error;
+use crate::error::*;
 
 #[derive(Clone)]
 pub enum Obj {
@@ -33,12 +33,12 @@ impl PartialEq for Obj {
 }
 
 impl Add for Obj {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Obj::String(l0), Obj::String(r0)) => Some(Obj::String(l0 + &r0)),
-            _ => None,
+            (Obj::String(l0), Obj::String(r0)) => Ok(Obj::String(l0 + &r0)),
+            _ => Err(Error::Arithmetic("'+' Invalid operands".into())),
         }
     }
 }
@@ -49,6 +49,7 @@ pub struct Fun {
     pub arity: usize,
     pub chunk: Chunk,
     pub upvalue_count: usize,
+    pub upvalues: Vec<UpValue>,
 }
 
 impl Fun {
@@ -58,6 +59,7 @@ impl Fun {
             arity: 0,
             chunk: Chunk::new(),
             upvalue_count: 0,
+            upvalues: Vec::new(),
         }
     }
 }
@@ -109,4 +111,11 @@ impl Display for Box<dyn NativeFun> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<native fn>")
     }
+}
+
+#[derive(Clone)]
+
+pub struct UpValue {
+    pub index: usize,
+    pub is_local: bool,
 }

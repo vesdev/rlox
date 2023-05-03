@@ -5,6 +5,8 @@ use std::{
 
 use super::object::*;
 
+use crate::error::*;
+
 #[derive(Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -40,78 +42,78 @@ impl Display for Value {
 }
 
 impl Neg for Value {
-    type Output = Option<Value>;
+    type Output = Result<Value>;
 
     fn neg(self) -> Self::Output {
         match self {
-            Self::Number(v) => Some(Self::Number(-v)),
-            _ => None,
+            Self::Number(v) => Ok(Self::Number(-v)),
+            _ => Err(Error::Arithmetic("'-'(neg) Invalid operands".into())),
         }
     }
 }
 
 impl Add for Value {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::Number(l0), Self::Number(r0)) => Some(Self::Number(l0 + r0)),
+            (Self::Number(l0), Self::Number(r0)) => Ok(Self::Number(l0 + r0)),
             (Self::Obj(l0), Self::Obj(r0)) => (l0 + r0).map(Self::Obj),
-            _ => None,
+            _ => Err(Error::Arithmetic("'+' Invalid operands".into())),
         }
     }
 }
 
 impl Sub for Value {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Some(Self::Number(a - b)),
-                _ => None,
+                Self::Number(b) => Ok(Self::Number(a - b)),
+                _ => Err(Error::Arithmetic("'-'(sub) Invalid operands".into())),
             },
-            _ => None,
+            _ => Err(Error::Arithmetic("'-'(sub) Invalid operands".into())),
         }
     }
 }
 
 impl Mul for Value {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Some(Self::Number(a * b)),
-                _ => None,
+                Self::Number(b) => Ok(Self::Number(a * b)),
+                _ => Err(Error::Arithmetic("'*' Invalid operands".into())),
             },
-            _ => None,
+            _ => Err(Error::Arithmetic("'*' Invalid operands".into())),
         }
     }
 }
 
 impl Div for Value {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn div(self, rhs: Self) -> Self::Output {
         match self {
             Self::Number(a) => match rhs {
-                Self::Number(b) => Some(Self::Number(a / b)),
-                _ => None,
+                Self::Number(b) => Ok(Self::Number(a / b)),
+                _ => Err(Error::Arithmetic("'/' Invalid operands".into())),
             },
-            _ => None,
+            _ => Err(Error::Arithmetic("'/' Invalid operands".into())),
         }
     }
 }
 
 impl Not for Value {
-    type Output = Option<Self>;
+    type Output = Result<Self>;
 
     fn not(self) -> Self::Output {
         match self {
-            Self::Bool(a) => Some(Self::Bool(!a)),
-            Self::Nil => Some(Self::Bool(true)),
-            _ => None,
+            Self::Bool(a) => Ok(Self::Bool(!a)),
+            Self::Nil => Ok(Self::Bool(true)),
+            _ => Err(Error::Arithmetic("'!' Invalid operands".into())),
         }
     }
 }
