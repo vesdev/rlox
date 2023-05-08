@@ -104,13 +104,15 @@ pub fn disassemble_instruction(
         OpCode::Constant(opr)
         | OpCode::DefineGlobal(opr)
         | OpCode::GetGlobal(opr)
-        | OpCode::SetGlobal(opr)
-        | OpCode::Call(opr) => chunk.constants[opr].clone(),
+        | OpCode::SetGlobal(opr) => chunk.constants[opr].clone(),
         OpCode::GetLocal(opr)
         | OpCode::SetLocal(opr)
         | OpCode::Jump(opr)
         | OpCode::JumpIfFalse(opr)
         | OpCode::Loop(opr)
+        | OpCode::SetUpValue(opr)
+        | OpCode::GetUpValue(opr)
+        | OpCode::Call(opr)
         | OpCode::Closure(opr) => Value::Number(opr as f64),
         _ => {
             write!(out, "{:<25}", op.to_string().blue())?;

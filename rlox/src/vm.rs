@@ -5,7 +5,9 @@ pub mod value;
 
 use crate::error::*;
 use colored::Colorize;
-use std::{collections::HashMap, rc::Rc};
+use indexmap::IndexMap;
+
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -13,7 +15,7 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::{Closure, Fun, NativeFun, Obj};
+use self::object::{Closure, FunDescriptor, NativeFun, Obj};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -29,6 +31,7 @@ pub struct Vm {
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
     frames: Vec<CallFrame>,
+    open_upvalues: IndexMap<usize, Rc<RefCell<Value>>>,
 }
 
 impl Vm {
@@ -37,12 +40,13 @@ impl Vm {
             stack: Vec::new(),
             globals: HashMap::new(),
             frames: Vec::new(),
+            open_upvalues: IndexMap::new(),
         }
     }
 
-    pub fn execute(&mut self, function: Fun) -> Result<()> {
+    pub fn execute(&mut self, function: FunDescriptor) -> Result<()> {
         let func_rc = Rc::new(function);
-        let closure_rc = Rc::new(Closure::new(func_rc));
+        let closure_rc = Rc::new(Closure::new(func_rc, Vec::new()));
         self.frames.push(CallFrame::new(closure_rc.clone(), 0));
         self.stack.push(Value::Obj(Obj::Closure(closure_rc)));
 
@@ -59,7 +63,7 @@ impl Vm {
             let instruction: OpCode = chunk.get_op(frame.ip);
             let mut ip_offset = 1;
 
-            if cfg!(debug_trace_execution) {
+            if cfg!(trace_exec) {
                 let mut out = String::new();
                 disassemble_instruction(&mut out, chunk, frame.ip).unwrap();
 
@@ -122,6 +126,13 @@ impl Vm {
                         return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
                     }
                 }
+                OpCode::GetUpValue(slot) => {
+                    self.stack
+                        .push(frame.closure.upvalues[slot].borrow().clone());
+                }
+                OpCode::SetUpValue(slot) => {
+                    *frame.closure.upvalues[slot].borrow_mut() = self.stack.last().unwrap().clone();
+                }
                 OpCode::Equal => {
                     stack_operands!(self.stack, b, a);
                     self.stack.push(Value::Bool(a == b));
@@ -162,7 +173,7 @@ impl Vm {
                     stack_operands!(self.stack, a);
                     let mut a = a.to_string();
 
-                    if cfg!(debug_trace_execution) {
+                    if cfg!(trace_exec) {
                         println!("{}", "     -----Print-----".magenta());
                         a.insert_str(0, "     ");
                         a = a.replace('\n', "\n     ");
@@ -170,7 +181,7 @@ impl Vm {
 
                     println!("{}", a);
 
-                    if cfg!(debug_trace_execution) {
+                    if cfg!(trace_exec) {
                         println!("{}", "     ---------------".magenta());
                     }
                 }
@@ -198,6 +209,11 @@ impl Vm {
                     chunk = &frame.closure.function.chunk;
                     ip_offset = 0;
                 }
+                OpCode::CloseUpValue => {
+                    stack_operands!(self.open_upvalues, upvalue);
+
+                    *upvalue.1.borrow_mut() = self.stack[frame.slot + upvalue.0].clone();
+                }
                 OpCode::Return => {
                     stack_operands!(self.stack, result);
 
@@ -206,11 +222,17 @@ impl Vm {
                         self.stack.pop();
                         exit = true;
                     } else {
+                        for upvalue in self.open_upvalues.drain(..).rev() {
+                            *upvalue.1.borrow_mut() = self.stack.remove(frame.slot + upvalue.0);
+                        }
+
+                        self.open_upvalues.clear();
+
                         self.stack.truncate(frame.slot - 1);
                         self.stack.push(result);
 
                         frame = self.frames.last().unwrap().clone();
-                        if cfg!(debug_trace_execution) {
+                        if cfg!(trace_exec) {
                             println!(
                                 "     Returned to: {}[{:04}]",
                                 frame.closure.function, frame.ip
@@ -224,12 +246,34 @@ impl Vm {
                 OpCode::Closure(offset) => {
                     let func = chunk.get_constant(offset);
                     if let Value::Obj(Obj::Fun(func)) = func {
-                        let closure = Closure::new(func);
+                        let mut closure_upvalues = Vec::new();
+                        for upvalue_descriptor in &func.upvalues {
+                            if upvalue_descriptor.is_local {
+                                let open_upvalue =
+                                    self.open_upvalues.get(&upvalue_descriptor.index);
+                                if let Some(open_upvalue) = open_upvalue {
+                                    closure_upvalues.push(open_upvalue.clone());
+                                } else {
+                                    let upvalue = Rc::new(RefCell::new(Value::Nil));
+                                    self.open_upvalues.insert(
+                                        upvalue_descriptor.index,
+                                        //sentinel value until upvalue closed
+                                        //so we can share the reference to other capturing closures before it exists
+                                        upvalue.clone(),
+                                    );
+                                    closure_upvalues.push(upvalue);
+                                }
+                            } else {
+                                closure_upvalues
+                                    .push(frame.closure.upvalues[upvalue_descriptor.index].clone());
+                            }
+                        }
+                        println!("{:?}", func.upvalues);
+                        println!("{:?}", self.open_upvalues);
+                        let closure = Closure::new(func, closure_upvalues);
                         self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));
                     }
                 }
-                OpCode::SetUpValue(_) => {}
-                OpCode::GetUpValue(_) => {}
             }
 
             frame.ip += ip_offset;
@@ -256,7 +300,7 @@ impl Vm {
 
                 self.frames.push(CallFrame::new(closure.clone(), index + 1));
 
-                if cfg!(debug_trace_execution) {
+                if cfg!(trace_exec) {
                     println!("     Called: {}()", closure.function);
                 }
                 Ok(())

@@ -1,4 +1,10 @@
-use std::{fmt::Display, ops::Add, rc::Rc, string::String};
+use std::{
+    cell::RefCell,
+    fmt::{Debug, Display},
+    ops::Add,
+    rc::Rc,
+    string::String,
+};
 
 use super::{chunk::Chunk, value::Value};
 use crate::error::*;
@@ -6,9 +12,20 @@ use crate::error::*;
 #[derive(Clone)]
 pub enum Obj {
     String(String),
-    Fun(Rc<Fun>),
+    Fun(Rc<FunDescriptor>),
     Closure(Rc<Closure>),
     NativeFun(Rc<Box<dyn NativeFun>>),
+}
+
+impl Debug for Obj {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(_) => f.debug_tuple("String").finish(),
+            Self::Fun(_) => f.debug_tuple("Fun").finish(),
+            Self::Closure(_) => f.debug_tuple("Closure").finish(),
+            Self::NativeFun(_) => f.debug_tuple("NativeFun").finish(),
+        }
+    }
 }
 
 impl Display for Obj {
@@ -44,27 +61,25 @@ impl Add for Obj {
 }
 
 #[derive(Clone, Default)]
-pub struct Fun {
+pub struct FunDescriptor {
     pub name: String,
     pub arity: usize,
     pub chunk: Chunk,
-    pub upvalue_count: usize,
-    pub upvalues: Vec<UpValue>,
+    pub upvalues: Vec<UpValueDescriptor>,
 }
 
-impl Fun {
+impl FunDescriptor {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             arity: 0,
             chunk: Chunk::new(),
-            upvalue_count: 0,
             upvalues: Vec::new(),
         }
     }
 }
 
-impl Display for Fun {
+impl Display for FunDescriptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.name.is_empty() {
             write!(f, "<script>")
@@ -76,9 +91,17 @@ impl Display for Fun {
 
 pub type NativeFunction = &'static dyn Fn(&[Value]) -> Value;
 
+#[derive(Clone, Debug)]
+
+pub struct UpValueDescriptor {
+    pub index: usize,
+    pub is_local: bool,
+}
+
 #[derive(Clone)]
 pub struct Closure {
-    pub function: Rc<Fun>,
+    pub function: Rc<FunDescriptor>,
+    pub upvalues: Vec<Rc<RefCell<Value>>>,
 }
 
 impl Display for Closure {
@@ -88,8 +111,8 @@ impl Display for Closure {
 }
 
 impl Closure {
-    pub fn new(function: Rc<Fun>) -> Self {
-        Self { function }
+    pub fn new(function: Rc<FunDescriptor>, upvalues: Vec<Rc<RefCell<Value>>>) -> Self {
+        Self { function, upvalues }
     }
 }
 
@@ -111,11 +134,4 @@ impl Display for Box<dyn NativeFun> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<native fn>")
     }
-}
-
-#[derive(Clone)]
-
-pub struct UpValue {
-    pub index: usize,
-    pub is_local: bool,
 }

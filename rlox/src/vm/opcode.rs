@@ -32,7 +32,8 @@ pub enum OpCode {
     Loop(usize),
     Call(usize),
     Closure(usize),
-
+    //diverged from clox, points to the last upvalue to close
+    CloseUpValue,
     Return,
 }
 
@@ -56,12 +57,14 @@ impl OpCode {
             | Self::DefineGlobal(_)
             | Self::GetGlobal(_)
             | Self::SetGlobal(_)
-            | OpCode::GetLocal(_)
-            | OpCode::SetLocal(_)
-            | OpCode::Jump(_)
-            | OpCode::JumpIfFalse(_)
-            | OpCode::Closure(_)
-            | OpCode::Loop(_) => 1,
+            | Self::SetUpValue(_)
+            | Self::GetUpValue(_)
+            | Self::GetLocal(_)
+            | Self::SetLocal(_)
+            | Self::Jump(_)
+            | Self::JumpIfFalse(_)
+            | Self::Closure(_)
+            | Self::Loop(_) => 1,
             _ => 0,
         }
     }

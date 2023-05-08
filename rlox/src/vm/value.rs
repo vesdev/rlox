@@ -7,7 +7,7 @@ use super::object::*;
 
 use crate::error::*;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     Nil,
@@ -68,11 +68,8 @@ impl Sub for Value {
     type Output = Result<Self>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        match self {
-            Self::Number(a) => match rhs {
-                Self::Number(b) => Ok(Self::Number(a - b)),
-                _ => Err(Error::Arithmetic("'-'(sub) Invalid operands".into())),
-            },
+        match (self, rhs) {
+            (Self::Number(a), Self::Number(b)) => Ok(Self::Number(a - b)),
             _ => Err(Error::Arithmetic("'-'(sub) Invalid operands".into())),
         }
     }

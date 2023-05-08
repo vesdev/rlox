@@ -11,7 +11,7 @@ mod scanner;
 
 pub struct State<'a> {
     panic_mode: bool,
-    function: Fun,
+    function: FunDescriptor,
     kind: FunctionKind,
     scope_depth: isize,
     locals: Vec<Local<'a>>,
@@ -26,7 +26,7 @@ impl<'a> State<'a> {
 
             locals: Vec::new(),
             scope_depth: 0,
-            function: Fun::new(function_name.into()),
+            function: FunDescriptor::new(function_name.into()),
             kind,
         }
     }
@@ -44,7 +44,7 @@ pub struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    pub fn compile(&mut self) -> Result<Fun, Vec<Error>> {
+    pub fn compile(&mut self) -> Result<FunDescriptor, Vec<Error>> {
         self.state().panic_mode = false;
         self.advance();
 
@@ -121,10 +121,10 @@ impl<'a> Compiler<'a> {
         true
     }
 
-    fn end(&mut self) -> Result<Fun, Vec<Error>> {
+    fn end(&mut self) -> Result<FunDescriptor, Vec<Error>> {
         self.emit_return();
 
-        if cfg!(debug_print_code) {
+        if cfg!(disassemble) {
             let mut name = "Entry Point".to_string();
             if !self.state().function.name.is_empty() {
                 name = self.state().function.name.clone();
@@ -142,14 +142,18 @@ impl<'a> Compiler<'a> {
         self.state().scope_depth += 1;
     }
 
-    fn end_scope(&mut self) {
+    fn end_scope(&mut self, close_upvalues: bool) {
         self.state().scope_depth -= 1;
-
         while !self.state().locals.is_empty()
             && self.state().locals.last().unwrap().depth > self.state().scope_depth
         {
-            self.emit_op(OpCode::Pop);
-            self.state().locals.pop();
+            let local = self.state().locals.pop().unwrap();
+
+            if close_upvalues && local.is_captured {
+                self.emit_op(OpCode::CloseUpValue);
+            } else {
+                self.emit_op(OpCode::Pop);
+            }
         }
     }
 
@@ -172,7 +176,6 @@ impl<'a> Compiler<'a> {
                 self.error("Invalid assignment target.");
             }
         } else {
-            println!("{:?}", self.current.kind);
             self.error_at_current("Expect expression.")
         }
     }
@@ -199,21 +202,21 @@ impl<'a> Compiler<'a> {
         None
     }
 
-    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
-        let upvalue_count = self.state().function.upvalues.len();
+    fn add_upvalue(state: &mut State, index: usize, is_local: bool) -> usize {
+        let upvalue_count = state.function.upvalues.len();
 
         for i in 0..upvalue_count {
-            let upvalue = &self.state().function.upvalues[i];
+            let upvalue = &state.function.upvalues[i];
             if upvalue.index == index && upvalue.is_local == is_local {
                 return i;
             }
         }
 
-        self.state()
+        state
             .function
             .upvalues
-            .push(UpValue { index, is_local });
-        upvalue_count + 1
+            .push(UpValueDescriptor { index, is_local });
+        upvalue_count
     }
 
     fn resolve_upvalue(&mut self, state_index: usize, name: Token) -> Option<usize> {
@@ -222,10 +225,19 @@ impl<'a> Compiler<'a> {
         }
         let enclosing_index = state_index - 1;
 
-        if let Some(local) = Self::resolve_local(&mut self.states[enclosing_index], name) {
-            self.add_upvalue(local, true);
-        } else if let Some(local) = self.resolve_upvalue(enclosing_index, name) {
-            self.add_upvalue(local, false);
+        if let Some(index) = Self::resolve_local(&mut self.states[enclosing_index], name) {
+            self.states[enclosing_index].locals[index].is_captured = true;
+            return Some(Self::add_upvalue(
+                &mut self.states[state_index],
+                index,
+                true,
+            ));
+        } else if let Some(index) = self.resolve_upvalue(enclosing_index, name) {
+            return Some(Self::add_upvalue(
+                &mut self.states[state_index],
+                index,
+                false,
+            ));
         }
         None
     }
@@ -412,6 +424,7 @@ impl<'a> Compiler<'a> {
 
             exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
             condition_exists = true;
+
             self.emit_op(OpCode::Pop);
         }
 
@@ -431,6 +444,19 @@ impl<'a> Compiler<'a> {
         }
 
         self.statement();
+
+        let scope_depth = self.state().scope_depth - 1;
+        //manually handle closing upvalues
+        //so each iteration will create a new copy
+        for local in (0..self.state().locals.len()).rev() {
+            if self.state().locals[local].depth <= scope_depth {
+                break;
+            }
+            if self.state().locals[local].is_captured {
+                self.emit_op(OpCode::CloseUpValue);
+            }
+        }
+
         self.emit_loop(loop_start);
 
         //condition
@@ -439,7 +465,7 @@ impl<'a> Compiler<'a> {
             self.emit_op(OpCode::Pop);
         }
 
-        self.end_scope();
+        self.end_scope(false);
     }
 
     fn if_statement(&mut self) {
@@ -538,7 +564,7 @@ impl<'a> Compiler<'a> {
         } else if self.matches(TokenKind::LeftBrace) {
             self.begin_scope();
             self.block();
-            self.end_scope();
+            self.end_scope(true);
         } else {
             self.expression_statement()
         }
@@ -767,8 +793,8 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) {
         get_op = OpCode::GetLocal(arg);
         set_op = OpCode::SetLocal(arg);
     } else if let Some(arg) = compiler.resolve_upvalue(compiler.states.len() - 1, name) {
-        get_op = OpCode::GetGlobal(arg);
-        set_op = OpCode::SetGlobal(arg);
+        get_op = OpCode::GetUpValue(arg);
+        set_op = OpCode::SetUpValue(arg);
     } else {
         let arg = compiler.identifier_constant(name);
         get_op = OpCode::GetGlobal(arg);
@@ -870,10 +896,15 @@ pub enum FunctionKind {
 struct Local<'a> {
     pub name: Token<'a>,
     pub depth: isize,
+    pub is_captured: bool,
 }
 
 impl<'a> Local<'a> {
     pub fn new(name: Token<'a>, depth: isize) -> Self {
-        Self { name, depth }
+        Self {
+            name,
+            depth,
+            is_captured: false,
+        }
     }
 }

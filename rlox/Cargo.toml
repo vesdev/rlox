@@ -8,5 +8,6 @@ edition = "2021"
 
 [dependencies]
 colored = "2.0.0"
+indexmap = "1.9.3"
 indoc = "2.0.0"
 thiserror = "1.0.39"
