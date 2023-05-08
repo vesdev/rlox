@@ -268,8 +268,7 @@ impl Vm {
                                     .push(frame.closure.upvalues[upvalue_descriptor.index].clone());
                             }
                         }
-                        println!("{:?}", func.upvalues);
-                        println!("{:?}", self.open_upvalues);
+
                         let closure = Closure::new(func, closure_upvalues);
                         self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));
                     }
