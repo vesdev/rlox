@@ -202,25 +202,15 @@ fn classes_invoke_edgecase() {
     check! {r#"
     class Oops {
         init() {
-          fun a() {
-            print "a";
-          }
-          fun b() {
-            print "b";
-          }
-          fun c() {
-            print "c";
-          }
-          fun d() {
-            print "d";
-          }
-      
-          this.field = a;
+          this.a = 10;
+        }
+
+        method() {
+            print "aa";
         }
       }
       
       var oops = Oops();
-      oops.field();
-      
+      Oops.method();
     "#};
 }

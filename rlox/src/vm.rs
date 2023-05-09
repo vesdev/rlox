@@ -136,8 +136,8 @@ impl Vm {
                 }
                 OpCode::GetProperty(offset) => {
                     let name = chunk.get_constant(offset).to_string();
-
-                    if let Some(Value::Obj(Obj::Instance(instance))) = self.stack.last().cloned() {
+                    let obj = self.stack.last().cloned();
+                    if let Some(Value::Obj(Obj::Instance(instance))) = obj {
                         if let Some(value) = instance.borrow().fields.get(&name) {
                             self.stack.pop();
                             self.stack.push(value.clone());
@@ -150,6 +150,16 @@ impl Vm {
                                     instance.clone(),
                                     method.clone(),
                                 ))));
+                        } else {
+                            return Err(Error::Runtime(
+                                format!("Undefined property {}.", name),
+                                frame.closure.function.chunk.get_line(absolute_ip),
+                            ));
+                        }
+                    } else if let Some(Value::Obj(Obj::Class(class))) = obj {
+                        if let Some(method) = class.borrow().methods.get(&name) {
+                            self.stack.pop();
+                            self.stack.push(Value::Obj(Obj::Closure(method.clone())));
                         } else {
                             return Err(Error::Runtime(
                                 format!("Undefined property {}.", name),
@@ -273,7 +283,7 @@ impl Vm {
 
                         self.open_upvalues.clear();
 
-                        self.stack.truncate(frame.slot - 1);
+                        self.stack.truncate(frame.slot);
                         self.stack.push(result);
 
                         frame = self.frames.last().unwrap().clone();
@@ -342,7 +352,6 @@ impl Vm {
 
     fn call_method(&mut self, method: Rc<Closure>, slot: usize, receiver: Value) {
         self.call(method, slot);
-        self.stack.push(receiver);
     }
 
     fn call(&mut self, method: Rc<Closure>, slot: usize) {
@@ -371,7 +380,8 @@ impl Vm {
                 let this = Value::Obj(Obj::Instance(bound.receiver.clone()));
                 let method = bound.method.clone();
 
-                self.call_method(method, index + 1, this);
+                self.stack[index] = this;
+                self.call(method, index);
 
                 Ok(())
             }
@@ -379,10 +389,10 @@ impl Vm {
                 let class = class.clone();
                 let instance = Instance::new(class.clone());
                 let stack_len = self.stack.len();
-                self.stack[stack_len - arg_count - 1] = Value::Obj(Obj::Instance(instance.clone()));
+                self.stack[stack_len - arg_count - 1] = Value::Obj(Obj::Instance(instance));
 
                 if let Some(init) = class.borrow().methods.get("init") {
-                    self.call_method(init.clone(), index + 1, Value::Obj(Obj::Instance(instance)));
+                    self.call(init.clone(), index);
                 }
 
                 Ok(())
@@ -398,11 +408,11 @@ impl Vm {
                     ));
                 }
 
-                self.call(closure.clone(), index + 1);
+                self.call(closure.clone(), index);
                 Ok(())
             }
             Value::Obj(object::Obj::NativeFun(func)) => {
-                let result = func.call(&self.stack[index + 1..])?;
+                let result = func.call(&self.stack[index..])?;
                 self.stack.truncate(index);
                 self.stack.push(result);
                 Ok(())

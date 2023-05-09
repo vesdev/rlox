@@ -20,11 +20,23 @@ pub struct State<'a> {
 
 impl<'a> State<'a> {
     pub fn new(function_name: impl Into<String>, kind: FunctionKind) -> Self {
+        let local = Local::new(
+            Token::new(
+                TokenKind::Fun,
+                if kind == FunctionKind::Method || kind == FunctionKind::Initializer {
+                    "this"
+                } else {
+                    ""
+                },
+                1,
+            ),
+            1,
+        );
         Self {
             panic_mode: false,
             errors: Vec::new(),
 
-            locals: Vec::new(),
+            locals: vec![local],
             scope_depth: 0,
             function: FunDescriptor::new(function_name.into()),
             kind,
@@ -56,10 +68,7 @@ impl<'a> Compiler<'a> {
         self.end()
     }
 
-    pub fn new(source: &'a str, mut state: State<'a>) -> Compiler<'a> {
-        state
-            .locals
-            .push(Local::new(Token::new(TokenKind::Fun, "", 0), 0));
+    pub fn new(source: &'a str, state: State<'a>) -> Compiler<'a> {
         Self {
             scanner: Scanner::new(source),
             states: vec![state],
@@ -335,6 +344,7 @@ impl<'a> Compiler<'a> {
         self.begin_scope();
 
         self.consume(TokenKind::LeftParen, "Expect '(' after function name.");
+
         if !self.check(TokenKind::RightParen) {
             loop {
                 self.state().function.arity += 1;
@@ -354,14 +364,6 @@ impl<'a> Compiler<'a> {
 
         self.consume(TokenKind::RightParen, "Expect ')' after parameters.");
         self.consume(TokenKind::LeftBrace, "Expect '{' before function body.");
-
-        if kind == FunctionKind::Method || kind == FunctionKind::Initializer {
-            self.add_local(Token::new(
-                TokenKind::Identifier,
-                "this",
-                self.previous.line,
-            ));
-        }
 
         self.block();
 
@@ -657,7 +659,7 @@ impl<'a> Compiler<'a> {
 
     fn emit_return(&mut self) {
         if self.state().kind == FunctionKind::Initializer {
-            self.emit_op(OpCode::GetLocal(self.state_ref().function.arity));
+            self.emit_op(OpCode::GetLocal(0));
         } else {
             self.emit_op(OpCode::Nil);
         }
