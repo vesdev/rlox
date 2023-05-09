@@ -34,7 +34,7 @@ fn fib() {
     }
       
     var start = clock();
-    print fib(20);
+    print fib(4);
     print clock() - start;
     "#};
 }
@@ -157,5 +157,70 @@ fn upvalue_while_loop() {
     main();
     globalOne();
     globalTwo();
+    "#};
+}
+
+#[test]
+fn classes() {
+    check! {r#"
+    class CoffeeMaker {
+        init(coffee, tea) {
+            print tea;
+            this.coffee = coffee;
+        }
+      
+        brew() {
+          print "Enjoy your cup of " + this.coffee;
+      
+          // No reusing the grounds!
+          this.coffee = nil;
+        }
+      }
+      
+      var maker = CoffeeMaker("coffee and chicory", "cup of tea");
+      maker.brew();
+    "#};
+}
+
+#[test]
+#[should_panic]
+fn class_initializer_return() {
+    check! {r#"
+    class ReturnFromInit {
+        init() {
+          return 10;
+        }
+      
+    }
+      
+    ReturnFromInit();
+    "#};
+}
+
+#[test]
+fn classes_invoke_edgecase() {
+    check! {r#"
+    class Oops {
+        init() {
+          fun a() {
+            print "a";
+          }
+          fun b() {
+            print "b";
+          }
+          fun c() {
+            print "c";
+          }
+          fun d() {
+            print "d";
+          }
+      
+          this.field = a;
+        }
+      }
+      
+      var oops = Oops();
+      oops.field();
+      
     "#};
 }

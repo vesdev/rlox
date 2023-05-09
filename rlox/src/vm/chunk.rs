@@ -100,12 +100,13 @@ pub fn disassemble_instruction(
 
     write!(out, "{} ", format!("{:04}", offset).green())?;
 
+    //TOO LAZY TO PROPERLY OUTPUT OPERANDS
     let operands = match op {
         OpCode::Constant(opr)
         | OpCode::DefineGlobal(opr)
         | OpCode::GetGlobal(opr)
-        | OpCode::SetGlobal(opr) => chunk.constants[opr].clone(),
-        OpCode::GetLocal(opr)
+        | OpCode::SetGlobal(opr)
+        | OpCode::GetLocal(opr)
         | OpCode::SetLocal(opr)
         | OpCode::Jump(opr)
         | OpCode::JumpIfFalse(opr)
@@ -113,7 +114,9 @@ pub fn disassemble_instruction(
         | OpCode::SetUpValue(opr)
         | OpCode::GetUpValue(opr)
         | OpCode::Call(opr)
-        | OpCode::Closure(opr) => Value::Number(opr as f64),
+        | OpCode::Closure(opr)
+        | OpCode::Method(opr) => Value::Number(opr as f64),
+        OpCode::GetProperty(opr) | OpCode::SetProperty(opr) => chunk.constants[opr].clone(),
         _ => {
             write!(out, "{:<25}", op.to_string().blue())?;
             return Ok(1);

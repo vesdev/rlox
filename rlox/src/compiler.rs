@@ -41,6 +41,7 @@ pub struct Compiler<'a> {
     scanner: Scanner<'a>,
     previous: Token<'a>,
     current: Token<'a>,
+    classes: Vec<()>,
 }
 
 impl<'a> Compiler<'a> {
@@ -72,6 +73,7 @@ impl<'a> Compiler<'a> {
                 lexeme: "n/a",
                 line: 0,
             },
+            classes: Vec::new(),
         }
     }
 
@@ -353,6 +355,14 @@ impl<'a> Compiler<'a> {
         self.consume(TokenKind::RightParen, "Expect ')' after parameters.");
         self.consume(TokenKind::LeftBrace, "Expect '{' before function body.");
 
+        if kind == FunctionKind::Method || kind == FunctionKind::Initializer {
+            self.add_local(Token::new(
+                TokenKind::Identifier,
+                "this",
+                self.previous.line,
+            ));
+        }
+
         self.block();
 
         let result = self.end();
@@ -369,6 +379,40 @@ impl<'a> Compiler<'a> {
                 self.state().errors.append(&mut e);
             }
         }
+    }
+
+    fn method(&mut self) {
+        self.consume(TokenKind::Identifier, "Expect method name.");
+        let constant = self.identifier_constant(self.previous);
+
+        self.function(if self.previous.lexeme == "init" {
+            FunctionKind::Initializer
+        } else {
+            FunctionKind::Method
+        });
+
+        self.emit_op(OpCode::Method(constant));
+    }
+
+    fn class_declaration(&mut self) {
+        self.consume(TokenKind::Identifier, "Expect class name.");
+        let class_name = self.previous;
+        let name_constant = self.identifier_constant(self.previous);
+        self.declare_variable();
+
+        self.emit_op(OpCode::Class(name_constant));
+        self.define_variable(name_constant);
+
+        self.classes.push(());
+
+        named_variable(self, class_name, false);
+        self.consume(TokenKind::LeftBrace, "Expect '{' before class body.");
+        while !self.check(TokenKind::RightBrace) && !self.check(TokenKind::Eof) {
+            self.method();
+        }
+        self.consume(TokenKind::RightBrace, "Expect '}' after class body.");
+
+        self.classes.pop();
     }
 
     fn fun_declaration(&mut self) {
@@ -503,6 +547,9 @@ impl<'a> Compiler<'a> {
         if self.matches(TokenKind::Semicolon) {
             self.emit_return();
         } else {
+            if self.state().kind == FunctionKind::Initializer {
+                self.error("Cant't return a value from an initializer.");
+            }
             self.expression();
             self.consume(TokenKind::Semicolon, "Expect ';' after return value.");
             self.emit_op(OpCode::Return);
@@ -573,7 +620,9 @@ impl<'a> Compiler<'a> {
     fn declaration(&mut self) {
         // ignore self.errors on this level
         // manually synchronized after
-        if self.matches(TokenKind::Fun) {
+        if self.matches(TokenKind::Class) {
+            self.class_declaration();
+        } else if self.matches(TokenKind::Fun) {
             self.fun_declaration();
         } else if self.matches(TokenKind::Var) {
             self.var_declaration();
@@ -607,7 +656,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn emit_return(&mut self) {
-        self.emit_op(OpCode::Nil);
+        if self.state().kind == FunctionKind::Initializer {
+            self.emit_op(OpCode::GetLocal(self.state_ref().function.arity));
+        } else {
+            self.emit_op(OpCode::Nil);
+        }
+
         self.emit_op(OpCode::Return)
     }
 
@@ -682,7 +736,7 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::LeftBrace => Rule::new(None, None, Precedence::None),
         TokenKind::RightBrace => Rule::new(None, None, Precedence::None),
         TokenKind::Comma => Rule::new(None, None, Precedence::None),
-        TokenKind::Dot => Rule::new(None, None, Precedence::None),
+        TokenKind::Dot => Rule::new(None, Some(&dot), Precedence::Call),
         TokenKind::Minus => Rule::new(Some(&unary), Some(&binary), Precedence::Term),
         TokenKind::Plus => Rule::new(None, Some(&binary), Precedence::Term),
         TokenKind::Semicolon => Rule::new(None, None, Precedence::None),
@@ -711,7 +765,7 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::Print => Rule::new(None, None, Precedence::None),
         TokenKind::Return => Rule::new(None, None, Precedence::None),
         TokenKind::Super => Rule::new(None, None, Precedence::None),
-        TokenKind::This => Rule::new(None, None, Precedence::None),
+        TokenKind::This => Rule::new(Some(&this), None, Precedence::None),
         TokenKind::True => Rule::new(Some(&literal), None, Precedence::None),
         TokenKind::Var => Rule::new(None, None, Precedence::None),
         TokenKind::While => Rule::new(None, None, Precedence::None),
@@ -834,6 +888,26 @@ fn call(compiler: &mut Compiler, _can_assign: bool) {
     compiler.emit_op(OpCode::Call(arg_count))
 }
 
+fn dot(compiler: &mut Compiler, can_assign: bool) {
+    compiler.consume(TokenKind::Identifier, "Expect property name after '.'.");
+    let name = compiler.identifier_constant(compiler.previous);
+
+    if can_assign && compiler.matches(TokenKind::Equal) {
+        compiler.expression();
+        compiler.emit_op(OpCode::SetProperty(name));
+    } else {
+        compiler.emit_op(OpCode::GetProperty(name));
+    }
+}
+
+fn this(compiler: &mut Compiler, _can_assign: bool) {
+    if compiler.classes.is_empty() {
+        compiler.error("Can't use 'this' outside of a class.");
+        return;
+    }
+    variable(compiler, false);
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
@@ -886,9 +960,11 @@ impl Rule {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum FunctionKind {
     Function,
+    Method,
+    Initializer,
     Script,
 }
 

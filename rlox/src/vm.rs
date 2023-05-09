@@ -15,7 +15,7 @@ use crate::vm::{
     value::Value,
 };
 
-use self::object::{Closure, FunDescriptor, NativeFun, Obj};
+use self::object::{BoundMethod, Class, Closure, FunDescriptor, Instance, NativeFun, Obj};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -92,14 +92,14 @@ impl Vm {
                 OpCode::Pop => {
                     self.stack.pop();
                 }
-                OpCode::GetLocal(opr) => {
-                    self.stack.push(self.stack[frame.slot + opr].clone());
+                OpCode::GetLocal(offset) => {
+                    self.stack.push(self.stack[frame.slot + offset].clone());
                 }
-                OpCode::SetLocal(opr) => {
-                    self.stack[frame.slot + opr] = self.stack.last().unwrap().clone();
+                OpCode::SetLocal(offset) => {
+                    self.stack[frame.slot + offset] = self.stack.last().unwrap().clone();
                 }
-                OpCode::GetGlobal(opr) => {
-                    let name = chunk.get_constant(opr).to_string();
+                OpCode::GetGlobal(offset) => {
+                    let name = chunk.get_constant(offset).to_string();
 
                     if let Some(val) = self.globals.get(&name) {
                         self.stack.push(val.clone());
@@ -108,13 +108,13 @@ impl Vm {
                         return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
                     }
                 }
-                OpCode::DefineGlobal(opr) => {
-                    let name = chunk.get_constant(opr).to_string();
+                OpCode::DefineGlobal(offset) => {
+                    let name = chunk.get_constant(offset).to_string();
 
                     self.globals.insert(name, self.stack.pop().unwrap().clone());
                 }
-                OpCode::SetGlobal(opr) => {
-                    let name = chunk.get_constant(opr).to_string();
+                OpCode::SetGlobal(offset) => {
+                    let name = chunk.get_constant(offset).to_string();
 
                     if self
                         .globals
@@ -126,12 +126,57 @@ impl Vm {
                         return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
                     }
                 }
-                OpCode::GetUpValue(slot) => {
+                OpCode::GetUpValue(offset) => {
                     self.stack
-                        .push(frame.closure.upvalues[slot].borrow().clone());
+                        .push(frame.closure.upvalues[offset].borrow().clone());
                 }
-                OpCode::SetUpValue(slot) => {
-                    *frame.closure.upvalues[slot].borrow_mut() = self.stack.last().unwrap().clone();
+                OpCode::SetUpValue(offset) => {
+                    *frame.closure.upvalues[offset].borrow_mut() =
+                        self.stack.last().unwrap().clone();
+                }
+                OpCode::GetProperty(offset) => {
+                    let name = chunk.get_constant(offset).to_string();
+
+                    if let Some(Value::Obj(Obj::Instance(instance))) = self.stack.last().cloned() {
+                        if let Some(value) = instance.borrow().fields.get(&name) {
+                            self.stack.pop();
+                            self.stack.push(value.clone());
+                        } else if let Some(method) =
+                            instance.borrow().class.borrow().methods.get(&name)
+                        {
+                            self.stack.pop();
+                            self.stack
+                                .push(Value::Obj(Obj::BoundMethod(BoundMethod::new(
+                                    instance.clone(),
+                                    method.clone(),
+                                ))));
+                        } else {
+                            return Err(Error::Runtime(
+                                format!("Undefined property {}.", name),
+                                frame.closure.function.chunk.get_line(absolute_ip),
+                            ));
+                        }
+                    } else {
+                        return Err(Error::Runtime(
+                            "Only instances have properties.".to_string(),
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        ));
+                    }
+                }
+                OpCode::SetProperty(offset) => {
+                    stack_operands!(self.stack, value, instance);
+                    let name = chunk.get_constant(offset).to_string();
+
+                    if let Value::Obj(Obj::Instance(instance)) = instance {
+                        instance.borrow_mut().fields.insert(name, value.clone());
+                    } else {
+                        return Err(Error::Runtime(
+                            "Only instances have fields.".to_string(),
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        ));
+                    }
+
+                    self.stack.push(value);
                 }
                 OpCode::Equal => {
                     stack_operands!(self.stack, b, a);
@@ -273,6 +318,20 @@ impl Vm {
                         self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));
                     }
                 }
+                OpCode::Class(offset) => {
+                    let name = chunk.get_constant(offset).to_string();
+                    self.stack.push(Value::Obj(Obj::Class(Class::new(name))))
+                }
+                OpCode::Method(offset) => {
+                    stack_operands!(self.stack, method);
+                    let name = chunk.get_constant(offset).to_string();
+
+                    if let Some(Value::Obj(Obj::Class(class))) = self.stack.last_mut().cloned() {
+                        if let Value::Obj(Obj::Closure(method)) = method {
+                            class.borrow_mut().methods.insert(name, method);
+                        }
+                    }
+                }
             }
 
             frame.ip += ip_offset;
@@ -281,11 +340,53 @@ impl Vm {
         Ok(())
     }
 
+    fn call_method(&mut self, method: Rc<Closure>, slot: usize, receiver: Value) {
+        self.call(method, slot);
+        self.stack.push(receiver);
+    }
+
+    fn call(&mut self, method: Rc<Closure>, slot: usize) {
+        if cfg!(trace_exec) {
+            println!("     Called: {}()", method.function);
+        }
+
+        self.frames.push(CallFrame::new(method, slot));
+    }
+
     fn call_value(&mut self, arg_count: usize, chunk: &Chunk, ip: usize) -> Result<()> {
         let index = self.stack.len() - arg_count - 1;
         let callee = &self.stack[index];
 
         match callee {
+            Value::Obj(object::Obj::BoundMethod(bound)) => {
+                if bound.method.function.arity != arg_count {
+                    return Err(Error::Runtime(
+                        format!(
+                            "Expected {} arguments but got {}.",
+                            bound.method.function.arity, arg_count
+                        ),
+                        bound.method.function.chunk.get_line(0),
+                    ));
+                }
+                let this = Value::Obj(Obj::Instance(bound.receiver.clone()));
+                let method = bound.method.clone();
+
+                self.call_method(method, index + 1, this);
+
+                Ok(())
+            }
+            Value::Obj(object::Obj::Class(class)) => {
+                let class = class.clone();
+                let instance = Instance::new(class.clone());
+                let stack_len = self.stack.len();
+                self.stack[stack_len - arg_count - 1] = Value::Obj(Obj::Instance(instance.clone()));
+
+                if let Some(init) = class.borrow().methods.get("init") {
+                    self.call_method(init.clone(), index + 1, Value::Obj(Obj::Instance(instance)));
+                }
+
+                Ok(())
+            }
             Value::Obj(object::Obj::Closure(closure)) => {
                 if closure.function.arity != arg_count {
                     return Err(Error::Runtime(
@@ -297,11 +398,7 @@ impl Vm {
                     ));
                 }
 
-                self.frames.push(CallFrame::new(closure.clone(), index + 1));
-
-                if cfg!(trace_exec) {
-                    println!("     Called: {}()", closure.function);
-                }
+                self.call(closure.clone(), index + 1);
                 Ok(())
             }
             Value::Obj(object::Obj::NativeFun(func)) => {

@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::HashMap,
     fmt::{Debug, Display},
     ops::Add,
     rc::Rc,
@@ -15,16 +16,14 @@ pub enum Obj {
     Fun(Rc<FunDescriptor>),
     Closure(Rc<Closure>),
     NativeFun(Rc<Box<dyn NativeFun>>),
+    Class(Rc<RefCell<Class>>),
+    Instance(Rc<RefCell<Instance>>),
+    BoundMethod(Rc<BoundMethod>),
 }
 
 impl Debug for Obj {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String(_) => f.debug_tuple("String").finish(),
-            Self::Fun(_) => f.debug_tuple("Fun").finish(),
-            Self::Closure(_) => f.debug_tuple("Closure").finish(),
-            Self::NativeFun(_) => f.debug_tuple("NativeFun").finish(),
-        }
+        write!(f, "{}", self)
     }
 }
 
@@ -35,6 +34,9 @@ impl Display for Obj {
             Obj::NativeFun(v) => v.to_string(),
             Obj::String(v) => v.to_string(),
             Obj::Closure(v) => v.to_string(),
+            Obj::Class(v) => v.borrow().to_string(),
+            Obj::Instance(v) => v.borrow().to_string(),
+            Obj::BoundMethod(v) => v.to_string(),
         };
         write!(f, "{}", s)
     }
@@ -133,5 +135,65 @@ pub trait NativeFun {
 impl Display for Box<dyn NativeFun> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<native fn>")
+    }
+}
+
+#[derive(Clone)]
+pub struct Class {
+    pub name: String,
+    pub methods: HashMap<String, Rc<Closure>>,
+}
+
+impl Class {
+    pub fn new(name: String) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            name,
+            methods: HashMap::new(),
+        }))
+    }
+}
+
+impl Display for Class {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<class {}>", self.name)
+    }
+}
+
+#[derive(Clone)]
+pub struct Instance {
+    pub class: Rc<RefCell<Class>>,
+    pub fields: HashMap<String, Value>,
+}
+
+impl Instance {
+    pub fn new(class: Rc<RefCell<Class>>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            class,
+            fields: HashMap::new(),
+        }))
+    }
+}
+
+impl Display for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<instance of {}>", self.class.borrow().name)
+    }
+}
+
+#[derive(Clone)]
+pub struct BoundMethod {
+    pub receiver: Rc<RefCell<Instance>>,
+    pub method: Rc<Closure>,
+}
+
+impl BoundMethod {
+    pub fn new(receiver: Rc<RefCell<Instance>>, method: Rc<Closure>) -> Rc<Self> {
+        Rc::new(Self { receiver, method })
+    }
+}
+
+impl Display for BoundMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<bound method {}>", self.method.function)
     }
 }
