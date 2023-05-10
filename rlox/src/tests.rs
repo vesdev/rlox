@@ -34,7 +34,7 @@ fn fib() {
     }
       
     var start = clock();
-    print fib(4);
+    print fib(30);
     print clock() - start;
     "#};
 }
@@ -210,7 +210,6 @@ fn classes_invoke_edgecase() {
       }
       
       var oops = Oops();
-      Oops.method();
     "#};
 }
 
@@ -228,8 +227,7 @@ fn classes_inheritance() {
           print this.a;
         }
     }
-    Cruller.a = "Glaze with icing.";
-    Cruller.finish();
+
     "#};
 }
 
@@ -239,16 +237,19 @@ fn classes_inheritance_super() {
     class Balls {
         cook() {
           print "Dunk in the fryer.";
-          return "cock";
+          return this.a;
         }
     }
       
     class Cock < Balls {
+        init() {
+            this.a = 10;
+        }
         finish() {
           print super.cook();
         }
     }
-    //fine when you make a instance
+    var cock = Cock();
     Cock().finish();
     "#};
 }

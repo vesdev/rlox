@@ -7,7 +7,7 @@ use crate::error::*;
 use colored::Colorize;
 use indexmap::IndexMap;
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, cmp::min, collections::HashMap, rc::Rc};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -46,7 +46,7 @@ impl Vm {
 
     pub fn execute(&mut self, function: FunDescriptor) -> Result<()> {
         let func_rc = Rc::new(function);
-        let closure_rc = Rc::new(Closure::new(func_rc, Vec::new()));
+        let closure_rc = Rc::new(Closure::new(Vec::new(), func_rc));
         self.frames.push(CallFrame::new(closure_rc.clone(), 0));
         self.stack.push(Value::Obj(Obj::Closure(closure_rc)));
 
@@ -72,12 +72,14 @@ impl Vm {
                 disassemble_instruction(&mut out, chunk, frame.ip)
                     .map_err(|_| Error::Runtime("Could not disassemble".to_string(), 0))?;
 
-                print!("{}|", out);
-
-                for value in &self.stack {
+                print!("{}>> ", out);
+                if self.stack.len() > 5 {
+                    print!(" ... ",);
+                }
+                for value in self.stack[self.stack.len().saturating_sub(5)..].iter() {
                     print!(" {}, ", value.to_string().replace('\n', "\\n").green());
                 }
-                println!("|");
+                println!();
             }
 
             match instruction {
@@ -163,12 +165,12 @@ impl Vm {
                 }
                 OpCode::GetProperty(offset) => {
                     let name = chunk.get_constant(offset).to_string();
-                    let obj = self.stack.last().cloned();
-                    match obj {
+
+                    match self.stack.last().cloned() {
                         Some(Value::Obj(Obj::Instance(instance))) => {
                             if let Some(value) = instance.borrow().fields.get(&name) {
                                 self.stack.pop();
-                                self.stack.push(value.clone())
+                                self.stack.push(value.clone());
                             } else {
                                 self.method(
                                     instance.borrow().class.clone(),
@@ -187,16 +189,16 @@ impl Vm {
                 }
                 OpCode::SetProperty(offset) => {
                     stack_operands!("OpCode::SetProperty", self.stack, value, instance);
-
                     let name = chunk.get_constant(offset).to_string();
 
-                    if let Value::Obj(Obj::Instance(instance)) = instance {
-                        instance.borrow_mut().fields.insert(name, value.clone());
-                    } else {
-                        Self::error(
+                    match instance {
+                        Value::Obj(Obj::Instance(instance)) => {
+                            instance.borrow_mut().fields.insert(name, value.clone());
+                        }
+                        _ => Self::error(
                             "Only instances have properties.",
                             frame.closure.function.chunk.get_line(absolute_ip),
-                        )?
+                        )?,
                     }
 
                     self.stack.push(value);
@@ -205,13 +207,15 @@ impl Vm {
                     stack_operands!("OpCode::GetSuper", self.stack, superclass, receiver);
                     let name = chunk.get_constant(offset).to_string();
 
-                    if let (Value::Obj(Obj::Class(class)), Value::Obj(Obj::Instance(receiver))) =
-                        (superclass, receiver)
-                    {
-                        self.method(class, name, chunk, absolute_ip, Some(receiver))?;
-                    } else {
-                        Self::error("Super only works for a instance", chunk.get_line(frame.ip))?;
-                    }
+                    match (superclass, receiver) {
+                        (
+                            Value::Obj(Obj::Class(superclass)),
+                            Value::Obj(Obj::Instance(receiver)),
+                        ) => self.method(superclass, name, chunk, absolute_ip, Some(receiver)),
+                        _ => {
+                            Self::error("Super only works for a instance", chunk.get_line(frame.ip))
+                        }
+                    }?;
                 }
                 OpCode::Equal => {
                     stack_operands!("OpCode::Equal", self.stack, b, a);
@@ -287,9 +291,10 @@ impl Vm {
                 OpCode::Call(arg_count) => {
                     let len = self.frames.len();
                     frame.ip += 1;
-                    self.frames[len - 1] = frame.clone();
+                    let ip = frame.ip;
+                    self.frames[len - 1] = frame;
 
-                    self.call_value(arg_count, chunk, frame.ip)?;
+                    let err = self.call_value(arg_count, ip);
                     frame = self
                         .frames
                         .last_mut()
@@ -297,6 +302,8 @@ impl Vm {
                         .clone();
                     chunk = &frame.closure.function.chunk;
                     ip_offset = 0;
+
+                    err.map_err(|e| Error::Runtime(e, chunk.get_line(frame.ip)))?;
                 }
                 OpCode::CloseUpValue => {
                     stack_operands!("OpCode::CloseUpValue", self.open_upvalues, upvalue);
@@ -311,11 +318,9 @@ impl Vm {
                         self.stack.pop();
                         exit = true;
                     } else {
-                        for upvalue in self.open_upvalues.drain(..).rev() {
+                        for upvalue in self.open_upvalues.drain(..) {
                             *upvalue.1.borrow_mut() = self.stack.remove(frame.slot + upvalue.0);
                         }
-
-                        self.open_upvalues.clear();
 
                         self.stack.truncate(frame.slot);
                         self.stack.push(result);
@@ -327,8 +332,12 @@ impl Vm {
                             .clone();
                         if cfg!(trace_exec) {
                             println!(
-                                "     Returned to: {}[{:04}]",
-                                frame.closure.function, frame.ip
+                                "{}",
+                                format!(
+                                    "\n      Returned to: {}[{:04}]\n",
+                                    frame.closure.function, frame.ip
+                                )
+                                .magenta()
                             );
                         }
                         chunk = &frame.closure.function.chunk;
@@ -336,33 +345,67 @@ impl Vm {
 
                     ip_offset = 0;
                 }
+                OpCode::Invoke(offset, arg_count) => {
+                    let name = chunk.get_constant(offset).to_string();
+                    let index = self.stack.len() - arg_count - 1;
+
+                    if let Some(Value::Obj(Obj::Instance(receiver))) =
+                        self.stack.get(index).cloned()
+                    {
+                        if let Some(method) = receiver.borrow().class.borrow().methods.get(&name) {
+                            frame.ip += 1;
+                            let len = self.frames.len();
+                            self.frames[len - 1] = frame;
+                            self.call(method.clone(), index);
+
+                            frame = self
+                                .frames
+                                .last_mut()
+                                .ok_or(Error::EmptyStack("OpCode::Call".to_string()))?
+                                .clone();
+                            chunk = &frame.closure.function.chunk;
+                            ip_offset = 0;
+                        }
+                    } else {
+                        Self::error(
+                            "Invoke only on instances",
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        )?;
+                    }
+                }
+                OpCode::SuperInvoke(offset, arg_count) => {
+                    stack_operands!("OpCode::SuperInvoke", self.stack, superclass);
+                    let name = chunk.get_constant(offset).to_string();
+                    let index = self.stack.len() - arg_count - 1;
+
+                    if let Value::Obj(Obj::Class(superclass)) = superclass {
+                        if let Some(method) = superclass.borrow().methods.get(&name) {
+                            frame.ip += 1;
+                            let len = self.frames.len();
+                            self.frames[len - 1] = frame;
+                            self.call(method.clone(), index);
+
+                            frame = self
+                                .frames
+                                .last_mut()
+                                .ok_or(Error::EmptyStack("OpCode::SuperInvoke".to_string()))?
+                                .clone();
+                            chunk = &frame.closure.function.chunk;
+                            ip_offset = 0;
+                        }
+                    } else {
+                        Self::error(
+                            "Invoke only on instances",
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        )?;
+                    }
+                }
                 OpCode::Closure(offset) => {
                     let func = chunk.get_constant(offset);
-                    if let Value::Obj(Obj::Fun(func)) = func {
-                        let mut closure_upvalues = Vec::new();
-                        for upvalue_descriptor in &func.upvalues {
-                            if upvalue_descriptor.is_local {
-                                let open_upvalue =
-                                    self.open_upvalues.get(&upvalue_descriptor.index);
-                                if let Some(open_upvalue) = open_upvalue {
-                                    closure_upvalues.push(open_upvalue.clone());
-                                } else {
-                                    let upvalue = Rc::new(RefCell::new(Value::Nil));
-                                    self.open_upvalues.insert(
-                                        upvalue_descriptor.index,
-                                        //sentinel value until upvalue closed
-                                        //so we can share the reference to other capturing closures before it exists
-                                        upvalue.clone(),
-                                    );
-                                    closure_upvalues.push(upvalue);
-                                }
-                            } else {
-                                closure_upvalues
-                                    .push(frame.closure.upvalues[upvalue_descriptor.index].clone());
-                            }
-                        }
 
-                        let closure = Closure::new(func, closure_upvalues);
+                    if let Value::Obj(Obj::Fun(func)) = func {
+                        let closure =
+                            Closure::new(self.open_upvalues(frame.closure.clone(), &func), func);
                         self.stack.push(Value::Obj(Obj::Closure(Rc::new(closure))));
                     }
                 }
@@ -414,40 +457,42 @@ impl Vm {
 
     fn call(&mut self, method: Rc<Closure>, slot: usize) {
         if cfg!(trace_exec) {
-            println!("     Called: {}()", method.function);
+            println!(
+                "{}",
+                format!("\n      Called: {}()\n", method.function).magenta()
+            );
         }
 
         self.frames.push(CallFrame::new(method, slot));
     }
 
-    fn call_value(&mut self, arg_count: usize, chunk: &Chunk, ip: usize) -> Result<()> {
+    fn call_method(&mut self, method: Rc<Closure>, slot: usize, receiver: Value) {
+        self.stack[slot] = receiver;
+        self.call(method, slot)
+    }
+
+    fn call_value(&mut self, arg_count: usize, ip: usize) -> Result<(), String> {
         let index = self.stack.len() - arg_count - 1;
         let callee = &self.stack[index];
 
         match callee {
             Value::Obj(object::Obj::BoundMethod(bound)) => {
                 if bound.method.function.arity != arg_count {
-                    return Err(Error::Runtime(
-                        format!(
-                            "Expected {} arguments but got {}.",
-                            bound.method.function.arity, arg_count
-                        ),
-                        bound.method.function.chunk.get_line(0),
+                    return Err(format!(
+                        "Expected {} arguments but got {}.",
+                        bound.method.function.arity, arg_count
                     ));
                 }
                 let this = Value::Obj(Obj::Instance(bound.receiver.clone()));
                 let method = bound.method.clone();
 
-                self.stack[index] = this;
-                self.call(method, index);
-
+                self.call_method(method, index, this);
                 Ok(())
             }
             Value::Obj(object::Obj::Class(class)) => {
                 let class = class.clone();
                 let instance = Instance::new(class.clone());
-                let stack_len = self.stack.len();
-                self.stack[stack_len - arg_count - 1] = Value::Obj(Obj::Instance(instance));
+                self.stack[index] = Value::Obj(Obj::Instance(instance));
 
                 if let Some(init) = class.borrow().methods.get("init") {
                     self.call(init.clone(), index);
@@ -457,13 +502,10 @@ impl Vm {
             }
             Value::Obj(object::Obj::Closure(closure)) => {
                 if closure.function.arity != arg_count {
-                    Self::error(
-                        format!(
-                            "Expected {} arguments but got {}.",
-                            closure.function.arity, arg_count
-                        ),
-                        closure.function.chunk.get_line(0),
-                    )?
+                    return Err(format!(
+                        "Expected {} arguments but got {}.",
+                        closure.function.arity, arg_count
+                    ));
                 }
 
                 self.call(closure.clone(), index);
@@ -475,7 +517,7 @@ impl Vm {
                 self.stack.push(result);
                 Ok(())
             }
-            _ => Self::error("Call Failed", chunk.get_line(ip)),
+            _ => Err("Call Failed".to_string()),
         }
     }
 
@@ -504,6 +546,35 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    fn open_upvalues(
+        &mut self,
+        closure: Rc<Closure>,
+        func: &Rc<FunDescriptor>,
+    ) -> Vec<Rc<RefCell<Value>>> {
+        func.upvalues
+            .iter()
+            .cloned()
+            .map(|upvalue_descriptor| {
+                if upvalue_descriptor.is_local {
+                    if let Some(open_upvalue) = self.open_upvalues.get(&upvalue_descriptor.index) {
+                        open_upvalue.clone()
+                    } else {
+                        let upvalue = Rc::new(RefCell::new(Value::Nil));
+                        self.open_upvalues.insert(
+                            upvalue_descriptor.index,
+                            //sentinel value until upvalue closed
+                            //so we can share the reference to other capturing closures before it exists
+                            upvalue.clone(),
+                        );
+                        upvalue
+                    }
+                } else {
+                    closure.upvalues[upvalue_descriptor.index].clone()
+                }
+            })
+            .collect()
     }
 
     pub fn define_native(

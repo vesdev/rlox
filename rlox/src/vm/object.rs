@@ -113,7 +113,7 @@ impl Display for Closure {
 }
 
 impl Closure {
-    pub fn new(function: Rc<FunDescriptor>, upvalues: Vec<Rc<RefCell<Value>>>) -> Self {
+    pub fn new(upvalues: Vec<Rc<RefCell<Value>>>, function: Rc<FunDescriptor>) -> Self {
         Self { function, upvalues }
     }
 }
@@ -129,7 +129,7 @@ impl Native {
     }
 }
 pub trait NativeFun {
-    fn call(&self, args: &[Value]) -> Result<Value, Error>;
+    fn call(&self, args: &[Value]) -> Result<Value, String>;
 }
 
 impl Display for Box<dyn NativeFun> {

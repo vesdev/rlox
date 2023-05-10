@@ -31,6 +31,8 @@ pub enum OpCode {
     JumpIfFalse(usize),
     Loop(usize),
     Call(usize),
+    Invoke(usize, usize),
+    SuperInvoke(usize, usize),
     Closure(usize),
     CloseUpValue,
     Return,

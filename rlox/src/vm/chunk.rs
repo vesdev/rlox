@@ -116,6 +116,7 @@ pub fn disassemble_instruction(
         | OpCode::Call(opr)
         | OpCode::Closure(opr)
         | OpCode::GetSuper(opr)
+        | OpCode::Invoke(opr, _)
         | OpCode::Method(opr) => Value::Number(opr as f64),
         OpCode::GetProperty(opr) | OpCode::SetProperty(opr) => chunk.constants[opr].clone(),
         _ => {

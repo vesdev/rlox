@@ -927,6 +927,9 @@ fn dot(compiler: &mut Compiler, can_assign: bool) {
     if can_assign && compiler.matches(TokenKind::Equal) {
         compiler.expression();
         compiler.emit_op(OpCode::SetProperty(name));
+    } else if compiler.matches(TokenKind::LeftParen) {
+        let arg_count = compiler.argument_list();
+        compiler.emit_op(OpCode::Invoke(name, arg_count));
     } else {
         compiler.emit_op(OpCode::GetProperty(name));
     }
@@ -951,20 +954,28 @@ fn super_(compiler: &mut Compiler, _can_assign: bool) {
     compiler.consume(TokenKind::Identifier, "Expect superclass method name.");
     let name = compiler.identifier_constant(compiler.previous);
 
-    println!("DEPTH {}", compiler.state().scope_depth);
     named_variable(
         compiler,
         Token::new(TokenKind::This, "this", compiler.previous.line),
         false,
     );
 
-    named_variable(
-        compiler,
-        Token::new(TokenKind::Super, "super", compiler.previous.line),
-        false,
-    );
-
-    compiler.emit_op(OpCode::GetSuper(name));
+    if compiler.matches(TokenKind::LeftParen) {
+        let arg_count = compiler.argument_list();
+        named_variable(
+            compiler,
+            Token::new(TokenKind::Super, "super", compiler.previous.line),
+            false,
+        );
+        compiler.emit_op(OpCode::SuperInvoke(name, arg_count));
+    } else {
+        named_variable(
+            compiler,
+            Token::new(TokenKind::Super, "super", compiler.previous.line),
+            false,
+        );
+        compiler.emit_op(OpCode::GetSuper(name));
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
