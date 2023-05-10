@@ -166,37 +166,21 @@ impl Vm {
                     let obj = self.stack.last().cloned();
                     match obj {
                         Some(Value::Obj(Obj::Instance(instance))) => {
-                            self.stack.pop();
                             if let Some(value) = instance.borrow().fields.get(&name) {
-                                self.stack.push(value.clone())
-                            } else if let Some(method) =
-                                instance.borrow().class.borrow().methods.get(&name)
-                            {
-                                self.stack
-                                    .push(Value::Obj(Obj::BoundMethod(BoundMethod::new(
-                                        instance.clone(),
-                                        method.clone(),
-                                    ))))
-                            } else {
-                                Self::error(
-                                    format!("Undefined property {}.", name),
-                                    frame.closure.function.chunk.get_line(absolute_ip),
-                                )?
-                            };
-                        }
-                        Some(Value::Obj(Obj::Class(class))) => {
-                            if let Some(method) = class.borrow().methods.get(&name) {
                                 self.stack.pop();
-                                self.stack.push(Value::Obj(Obj::Closure(method.clone())));
+                                self.stack.push(value.clone())
                             } else {
-                                Self::error(
-                                    format!("Undefined property {}.", name),
-                                    frame.closure.function.chunk.get_line(absolute_ip),
-                                )?
+                                self.method(
+                                    instance.borrow().class.clone(),
+                                    name,
+                                    chunk,
+                                    absolute_ip,
+                                    Some(instance.clone()),
+                                )?;
                             }
                         }
                         _ => Self::error(
-                            "Only instances have fields.",
+                            "Only instances have properties.",
                             frame.closure.function.chunk.get_line(absolute_ip),
                         )?,
                     }
@@ -210,12 +194,24 @@ impl Vm {
                         instance.borrow_mut().fields.insert(name, value.clone());
                     } else {
                         Self::error(
-                            "Only instances have fields.",
+                            "Only instances have properties.",
                             frame.closure.function.chunk.get_line(absolute_ip),
                         )?
                     }
 
                     self.stack.push(value);
+                }
+                OpCode::GetSuper(offset) => {
+                    stack_operands!("OpCode::GetSuper", self.stack, superclass, receiver);
+                    let name = chunk.get_constant(offset).to_string();
+
+                    if let (Value::Obj(Obj::Class(class)), Value::Obj(Obj::Instance(receiver))) =
+                        (superclass, receiver)
+                    {
+                        self.method(class, name, chunk, absolute_ip, Some(receiver))?;
+                    } else {
+                        Self::error("Super only works for a instance", chunk.get_line(frame.ip))?;
+                    }
                 }
                 OpCode::Equal => {
                     stack_operands!("OpCode::Equal", self.stack, b, a);
@@ -383,11 +379,15 @@ impl Vm {
                     if let (Value::Obj(Obj::Class(subclass)), Value::Obj(Obj::Class(superclass))) =
                         (subclass, superclass)
                     {
-                        superclass
+                        subclass
                             .borrow_mut()
                             .methods
-                            .extend(subclass.borrow_mut().methods.clone());
+                            .extend(superclass.borrow_mut().methods.clone());
                     } else {
+                        Self::error(
+                            "Superclass must be a class.",
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        )?;
                     }
                 }
                 OpCode::Method(offset) => {
@@ -477,6 +477,33 @@ impl Vm {
             }
             _ => Self::error("Call Failed", chunk.get_line(ip)),
         }
+    }
+
+    fn method(
+        &mut self,
+        class: Rc<RefCell<Class>>,
+        name: String,
+        chunk: &Chunk,
+        ip: usize,
+        receiver: Option<Rc<RefCell<Instance>>>,
+    ) -> Result<()> {
+        if let Some(method) = class.borrow().methods.get(&name) {
+            self.stack.pop();
+
+            if let Some(receiver) = receiver {
+                self.stack
+                    .push(Value::Obj(Obj::BoundMethod(BoundMethod::new(
+                        receiver,
+                        method.clone(),
+                    ))))
+            } else {
+                self.stack.push(Value::Obj(Obj::Closure(method.clone())));
+            }
+        } else {
+            Self::error(format!("Undefined property {}.", name), chunk.get_line(ip))?;
+        }
+
+        Ok(())
     }
 
     pub fn define_native(

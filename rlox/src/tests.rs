@@ -213,3 +213,42 @@ fn classes_invoke_edgecase() {
       Oops.method();
     "#};
 }
+
+#[test]
+fn classes_inheritance() {
+    check! {r#"
+    class Doughnut {
+        cook() {
+          print "Dunk in the fryer.";
+        }
+    }
+      
+    class Cruller < Doughnut {
+        finish() {
+          print this.a;
+        }
+    }
+    Cruller.a = "Glaze with icing.";
+    Cruller.finish();
+    "#};
+}
+
+#[test]
+fn classes_inheritance_super() {
+    check! {r#"
+    class Balls {
+        cook() {
+          print "Dunk in the fryer.";
+          return "cock";
+        }
+    }
+      
+    class Cock < Balls {
+        finish() {
+          print super.cook();
+        }
+    }
+    //fine when you make a instance
+    Cock().finish();
+    "#};
+}

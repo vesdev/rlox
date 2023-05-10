@@ -16,6 +16,7 @@ pub enum OpCode {
     SetUpValue(usize),
     GetProperty(usize),
     SetProperty(usize),
+    GetSuper(usize),
     Equal,
     Greater,
     Less,

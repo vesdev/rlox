@@ -28,9 +28,9 @@ impl<'a> State<'a> {
                 } else {
                     ""
                 },
-                1,
+                0,
             ),
-            1,
+            0,
         );
         Self {
             panic_mode: false,
@@ -53,7 +53,7 @@ pub struct Compiler<'a> {
     scanner: Scanner<'a>,
     previous: Token<'a>,
     current: Token<'a>,
-    classes: Vec<()>,
+    classes: Vec<ClassScope>,
 }
 
 impl<'a> Compiler<'a> {
@@ -86,16 +86,20 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    pub fn state(&mut self) -> &mut State<'a> {
+    fn state(&mut self) -> &mut State<'a> {
         self.states.last_mut().unwrap()
     }
 
-    pub fn state_ref(&self) -> &State<'a> {
+    fn state_ref(&self) -> &State<'a> {
         self.states.last().unwrap()
     }
 
-    pub fn state_enclosing(&mut self) -> &mut State<'a> {
+    fn state_enclosing(&mut self) -> &mut State<'a> {
         self.states.last_mut().unwrap()
+    }
+
+    fn class(&mut self) -> &mut ClassScope {
+        self.classes.last_mut().unwrap()
     }
 
     fn advance(&mut self) {
@@ -231,7 +235,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn resolve_upvalue(&mut self, state_index: usize, name: Token) -> Option<usize> {
-        if state_index < 2 {
+        if state_index < 1 {
             return None;
         }
         let enclosing_index = state_index - 1;
@@ -250,6 +254,8 @@ impl<'a> Compiler<'a> {
                 false,
             ));
         }
+
+        println!("unfound upvalue: {}", name.lexeme);
         None
     }
 
@@ -405,7 +411,7 @@ impl<'a> Compiler<'a> {
         self.emit_op(OpCode::Class(name_constant));
         self.define_variable(name_constant);
 
-        self.classes.push(());
+        self.classes.push(ClassScope::new());
 
         if self.matches(TokenKind::Less) {
             self.consume(TokenKind::Identifier, "Expect superclass name.");
@@ -413,8 +419,18 @@ impl<'a> Compiler<'a> {
             if Self::identifiers_equal(class_name, self.previous) {
                 self.error("A class can't inherit from itself.");
             }
+
+            self.begin_scope();
+
+            let token = Token::new(TokenKind::Super, "super", self.current.line);
+
+            self.add_local(token);
+            self.define_variable(0);
+
             named_variable(self, class_name, false);
+
             self.emit_op(OpCode::Inerhit);
+            self.class().has_super_class = true;
         }
 
         named_variable(self, class_name, false);
@@ -423,6 +439,10 @@ impl<'a> Compiler<'a> {
             self.method();
         }
         self.consume(TokenKind::RightBrace, "Expect '}' after class body.");
+
+        if self.class().has_super_class {
+            self.end_scope(true);
+        }
 
         self.classes.pop();
     }
@@ -776,7 +796,7 @@ fn get_rule(kind: TokenKind) -> Rule {
         TokenKind::Or => Rule::new(None, Some(&or), Precedence::Or),
         TokenKind::Print => Rule::new(None, None, Precedence::None),
         TokenKind::Return => Rule::new(None, None, Precedence::None),
-        TokenKind::Super => Rule::new(None, None, Precedence::None),
+        TokenKind::Super => Rule::new(Some(&super_), None, Precedence::None),
         TokenKind::This => Rule::new(Some(&this), None, Precedence::None),
         TokenKind::True => Rule::new(Some(&literal), None, Precedence::None),
         TokenKind::Var => Rule::new(None, None, Precedence::None),
@@ -920,6 +940,33 @@ fn this(compiler: &mut Compiler, _can_assign: bool) {
     variable(compiler, false);
 }
 
+fn super_(compiler: &mut Compiler, _can_assign: bool) {
+    if compiler.classes.is_empty() {
+        compiler.error("Can't use 'super' outside of a class.");
+    } else if !compiler.class().has_super_class {
+        compiler.error("Can't use 'super' in a class with no superclass.");
+    }
+
+    compiler.consume(TokenKind::Dot, "Expect '.' after 'super'.");
+    compiler.consume(TokenKind::Identifier, "Expect superclass method name.");
+    let name = compiler.identifier_constant(compiler.previous);
+
+    println!("DEPTH {}", compiler.state().scope_depth);
+    named_variable(
+        compiler,
+        Token::new(TokenKind::This, "this", compiler.previous.line),
+        false,
+    );
+
+    named_variable(
+        compiler,
+        Token::new(TokenKind::Super, "super", compiler.previous.line),
+        false,
+    );
+
+    compiler.emit_op(OpCode::GetSuper(name));
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
@@ -993,6 +1040,19 @@ impl<'a> Local<'a> {
             name,
             depth,
             is_captured: false,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ClassScope {
+    pub has_super_class: bool,
+}
+
+impl ClassScope {
+    pub fn new() -> Self {
+        Self {
+            has_super_class: false,
         }
     }
 }

@@ -98,7 +98,7 @@ pub fn disassemble_instruction(
         write!(out, "{:<5}", chunk.lines[offset].to_string().blue())?;
     }
 
-    write!(out, "{} ", format!("{:04}", offset).green())?;
+    write!(out, "{} ", format!("{:04}", offset).bright_black())?;
 
     //TOO LAZY TO PROPERLY OUTPUT OPERANDS
     let operands = match op {
@@ -115,6 +115,7 @@ pub fn disassemble_instruction(
         | OpCode::GetUpValue(opr)
         | OpCode::Call(opr)
         | OpCode::Closure(opr)
+        | OpCode::GetSuper(opr)
         | OpCode::Method(opr) => Value::Number(opr as f64),
         OpCode::GetProperty(opr) | OpCode::SetProperty(opr) => chunk.constants[opr].clone(),
         _ => {
