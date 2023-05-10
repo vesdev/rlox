@@ -407,6 +407,16 @@ impl<'a> Compiler<'a> {
 
         self.classes.push(());
 
+        if self.matches(TokenKind::Less) {
+            self.consume(TokenKind::Identifier, "Expect superclass name.");
+            variable(self, false);
+            if Self::identifiers_equal(class_name, self.previous) {
+                self.error("A class can't inherit from itself.");
+            }
+            named_variable(self, class_name, false);
+            self.emit_op(OpCode::Inerhit);
+        }
+
         named_variable(self, class_name, false);
         self.consume(TokenKind::LeftBrace, "Expect '{' before class body.");
         while !self.check(TokenKind::RightBrace) && !self.check(TokenKind::Eof) {

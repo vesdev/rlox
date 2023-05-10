@@ -91,7 +91,6 @@ fn upvalue_in_block() {
     fun main() {
         var a = "A initial";
         {
-            var a = "A inner";
             var b = "B initial";
             fun inner() { 
                 print a;

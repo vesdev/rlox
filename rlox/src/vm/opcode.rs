@@ -34,6 +34,7 @@ pub enum OpCode {
     CloseUpValue,
     Return,
     Class(usize),
+    Inerhit,
     Method(usize),
 }
 

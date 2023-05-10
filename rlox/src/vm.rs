@@ -20,9 +20,9 @@ use self::object::{BoundMethod, Class, Closure, FunDescriptor, Instance, NativeF
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 macro_rules! stack_operands {
-    ( $vec:expr $(, $name:ident)+ ) => {
+    ( $opcode:literal, $vec:expr $(, $name:ident)+ ) => {
         $(
-            let $name = $vec.pop().unwrap();
+            let $name = $vec.pop().ok_or(Error::EmptyStack($opcode.to_string()))?;
         )*
     };
 }
@@ -54,7 +54,11 @@ impl Vm {
     }
 
     fn run(&mut self) -> Result<()> {
-        let mut frame = self.frames.last_mut().unwrap().clone();
+        let mut frame = self
+            .frames
+            .last_mut()
+            .ok_or(Error::EmptyStack("rlox vm".to_string()))?
+            .clone();
         let mut chunk = &frame.closure.function.chunk;
         let mut exit = false;
 
@@ -65,7 +69,8 @@ impl Vm {
 
             if cfg!(trace_exec) {
                 let mut out = String::new();
-                disassemble_instruction(&mut out, chunk, frame.ip).unwrap();
+                disassemble_instruction(&mut out, chunk, frame.ip)
+                    .map_err(|_| Error::Runtime("Could not disassemble".to_string(), 0))?;
 
                 print!("{}|", out);
 
@@ -96,7 +101,11 @@ impl Vm {
                     self.stack.push(self.stack[frame.slot + offset].clone());
                 }
                 OpCode::SetLocal(offset) => {
-                    self.stack[frame.slot + offset] = self.stack.last().unwrap().clone();
+                    self.stack[frame.slot + offset] = self
+                        .stack
+                        .last()
+                        .ok_or(Error::EmptyStack("OpCode::SetLocal".to_string()))?
+                        .clone();
                 }
                 OpCode::GetGlobal(offset) => {
                     let name = chunk.get_constant(offset).to_string();
@@ -104,26 +113,41 @@ impl Vm {
                     if let Some(val) = self.globals.get(&name) {
                         self.stack.push(val.clone());
                     } else {
-                        let msg = format!("Undefined variable {}", name);
-                        return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
+                        Self::error(
+                            format!("Undefined variable {}", name),
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        )?
                     }
                 }
                 OpCode::DefineGlobal(offset) => {
                     let name = chunk.get_constant(offset).to_string();
 
-                    self.globals.insert(name, self.stack.pop().unwrap().clone());
+                    self.globals.insert(
+                        name,
+                        self.stack
+                            .pop()
+                            .ok_or(Error::EmptyStack("OpCode::DefineGlobal".to_string()))?
+                            .clone(),
+                    );
                 }
                 OpCode::SetGlobal(offset) => {
                     let name = chunk.get_constant(offset).to_string();
 
                     if self
                         .globals
-                        .insert(name.clone(), self.stack.last().unwrap().clone())
+                        .insert(
+                            name.clone(),
+                            self.stack
+                                .last()
+                                .ok_or(Error::EmptyStack("OpCode::SetGlobal".to_string()))?
+                                .clone(),
+                        )
                         .is_none()
                     {
-                        self.globals.remove(&name);
-                        let msg = format!("Undefined variable {}", name);
-                        return Err(Error::Runtime(msg, chunk.get_line(absolute_ip)));
+                        Self::error(
+                            format!("Undefined variable {}", name),
+                            frame.closure.function.chunk.get_line(absolute_ip),
+                        )?
                     }
                 }
                 OpCode::GetUpValue(offset) => {
@@ -131,101 +155,106 @@ impl Vm {
                         .push(frame.closure.upvalues[offset].borrow().clone());
                 }
                 OpCode::SetUpValue(offset) => {
-                    *frame.closure.upvalues[offset].borrow_mut() =
-                        self.stack.last().unwrap().clone();
+                    *frame.closure.upvalues[offset].borrow_mut() = self
+                        .stack
+                        .last()
+                        .ok_or(Error::EmptyStack("OpCode::SetUpValue".to_string()))?
+                        .clone();
                 }
                 OpCode::GetProperty(offset) => {
                     let name = chunk.get_constant(offset).to_string();
                     let obj = self.stack.last().cloned();
-                    if let Some(Value::Obj(Obj::Instance(instance))) = obj {
-                        if let Some(value) = instance.borrow().fields.get(&name) {
+                    match obj {
+                        Some(Value::Obj(Obj::Instance(instance))) => {
                             self.stack.pop();
-                            self.stack.push(value.clone());
-                        } else if let Some(method) =
-                            instance.borrow().class.borrow().methods.get(&name)
-                        {
-                            self.stack.pop();
-                            self.stack
-                                .push(Value::Obj(Obj::BoundMethod(BoundMethod::new(
-                                    instance.clone(),
-                                    method.clone(),
-                                ))));
-                        } else {
-                            return Err(Error::Runtime(
-                                format!("Undefined property {}.", name),
-                                frame.closure.function.chunk.get_line(absolute_ip),
-                            ));
+                            if let Some(value) = instance.borrow().fields.get(&name) {
+                                self.stack.push(value.clone())
+                            } else if let Some(method) =
+                                instance.borrow().class.borrow().methods.get(&name)
+                            {
+                                self.stack
+                                    .push(Value::Obj(Obj::BoundMethod(BoundMethod::new(
+                                        instance.clone(),
+                                        method.clone(),
+                                    ))))
+                            } else {
+                                Self::error(
+                                    format!("Undefined property {}.", name),
+                                    frame.closure.function.chunk.get_line(absolute_ip),
+                                )?
+                            };
                         }
-                    } else if let Some(Value::Obj(Obj::Class(class))) = obj {
-                        if let Some(method) = class.borrow().methods.get(&name) {
-                            self.stack.pop();
-                            self.stack.push(Value::Obj(Obj::Closure(method.clone())));
-                        } else {
-                            return Err(Error::Runtime(
-                                format!("Undefined property {}.", name),
-                                frame.closure.function.chunk.get_line(absolute_ip),
-                            ));
+                        Some(Value::Obj(Obj::Class(class))) => {
+                            if let Some(method) = class.borrow().methods.get(&name) {
+                                self.stack.pop();
+                                self.stack.push(Value::Obj(Obj::Closure(method.clone())));
+                            } else {
+                                Self::error(
+                                    format!("Undefined property {}.", name),
+                                    frame.closure.function.chunk.get_line(absolute_ip),
+                                )?
+                            }
                         }
-                    } else {
-                        return Err(Error::Runtime(
-                            "Only instances have properties.".to_string(),
+                        _ => Self::error(
+                            "Only instances have fields.",
                             frame.closure.function.chunk.get_line(absolute_ip),
-                        ));
+                        )?,
                     }
                 }
                 OpCode::SetProperty(offset) => {
-                    stack_operands!(self.stack, value, instance);
+                    stack_operands!("OpCode::SetProperty", self.stack, value, instance);
+
                     let name = chunk.get_constant(offset).to_string();
 
                     if let Value::Obj(Obj::Instance(instance)) = instance {
                         instance.borrow_mut().fields.insert(name, value.clone());
                     } else {
-                        return Err(Error::Runtime(
-                            "Only instances have fields.".to_string(),
+                        Self::error(
+                            "Only instances have fields.",
                             frame.closure.function.chunk.get_line(absolute_ip),
-                        ));
+                        )?
                     }
 
                     self.stack.push(value);
                 }
                 OpCode::Equal => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Equal", self.stack, b, a);
                     self.stack.push(Value::Bool(a == b));
                 }
                 OpCode::Greater => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Greater", self.stack, b, a);
                     self.stack.push(Value::Bool(a > b));
                 }
                 OpCode::Less => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Less", self.stack, b, a);
                     self.stack.push(Value::Bool(a < b));
                 }
                 OpCode::Add => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Add", self.stack, b, a);
                     self.stack.push((a + b)?);
                 }
                 OpCode::Subtract => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Subtract", self.stack, b, a);
                     self.stack.push((a - b)?);
                 }
                 OpCode::Multiply => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Multiply", self.stack, b, a);
                     self.stack.push((a * b)?);
                 }
                 OpCode::Divide => {
-                    stack_operands!(self.stack, b, a);
+                    stack_operands!("OpCode::Divide", self.stack, b, a);
                     self.stack.push((a / b)?);
                 }
                 OpCode::Not => {
-                    stack_operands!(self.stack, a);
+                    stack_operands!("OpCode::Not", self.stack, a);
                     self.stack.push((!a)?);
                 }
                 OpCode::Negate => {
-                    stack_operands!(self.stack, a);
+                    stack_operands!("OpCode::Negate", self.stack, a);
                     self.stack.push((-a)?);
                 }
                 OpCode::Print => {
-                    stack_operands!(self.stack, a);
+                    stack_operands!("OpCode::Print", self.stack, a);
                     let mut a = a.to_string();
 
                     if cfg!(trace_exec) {
@@ -245,7 +274,12 @@ impl Vm {
                     ip_offset = 0;
                 }
                 OpCode::JumpIfFalse(offset) => {
-                    if self.stack.last().unwrap().is_falsey() {
+                    if self
+                        .stack
+                        .last()
+                        .ok_or(Error::EmptyStack("OpCode::JumpIfFalse".to_string()))?
+                        .is_falsey()
+                    {
                         frame.ip += offset;
                         ip_offset = 0;
                     }
@@ -260,17 +294,21 @@ impl Vm {
                     self.frames[len - 1] = frame.clone();
 
                     self.call_value(arg_count, chunk, frame.ip)?;
-                    frame = self.frames.last_mut().unwrap().clone();
+                    frame = self
+                        .frames
+                        .last_mut()
+                        .ok_or(Error::EmptyStack("OpCode::Call".to_string()))?
+                        .clone();
                     chunk = &frame.closure.function.chunk;
                     ip_offset = 0;
                 }
                 OpCode::CloseUpValue => {
-                    stack_operands!(self.open_upvalues, upvalue);
+                    stack_operands!("OpCode::CloseUpValue", self.open_upvalues, upvalue);
 
                     *upvalue.1.borrow_mut() = self.stack[frame.slot + upvalue.0].clone();
                 }
                 OpCode::Return => {
-                    stack_operands!(self.stack, result);
+                    stack_operands!("OpCode::Return", self.stack, result);
 
                     self.frames.pop();
                     if self.frames.is_empty() {
@@ -286,7 +324,11 @@ impl Vm {
                         self.stack.truncate(frame.slot);
                         self.stack.push(result);
 
-                        frame = self.frames.last().unwrap().clone();
+                        frame = self
+                            .frames
+                            .last_mut()
+                            .ok_or(Error::EmptyStack("OpCode::Return".to_string()))?
+                            .clone();
                         if cfg!(trace_exec) {
                             println!(
                                 "     Returned to: {}[{:04}]",
@@ -332,8 +374,24 @@ impl Vm {
                     let name = chunk.get_constant(offset).to_string();
                     self.stack.push(Value::Obj(Obj::Class(Class::new(name))))
                 }
+                OpCode::Inerhit => {
+                    stack_operands!("OpCode::Inerhit", self.stack, subclass);
+                    let superclass = self
+                        .stack
+                        .last_mut()
+                        .ok_or(Error::EmptyStack("OpCode::Inerhit".to_string()))?;
+                    if let (Value::Obj(Obj::Class(subclass)), Value::Obj(Obj::Class(superclass))) =
+                        (subclass, superclass)
+                    {
+                        superclass
+                            .borrow_mut()
+                            .methods
+                            .extend(subclass.borrow_mut().methods.clone());
+                    } else {
+                    }
+                }
                 OpCode::Method(offset) => {
-                    stack_operands!(self.stack, method);
+                    stack_operands!("OpCode::Method", self.stack, method);
                     let name = chunk.get_constant(offset).to_string();
 
                     if let Some(Value::Obj(Obj::Class(class))) = self.stack.last_mut().cloned() {
@@ -350,8 +408,8 @@ impl Vm {
         Ok(())
     }
 
-    fn call_method(&mut self, method: Rc<Closure>, slot: usize, receiver: Value) {
-        self.call(method, slot);
+    fn error(message: impl Into<String>, line: usize) -> Result<()> {
+        Err(Error::Runtime(message.into(), line))
     }
 
     fn call(&mut self, method: Rc<Closure>, slot: usize) {
@@ -399,13 +457,13 @@ impl Vm {
             }
             Value::Obj(object::Obj::Closure(closure)) => {
                 if closure.function.arity != arg_count {
-                    return Err(Error::Runtime(
+                    Self::error(
                         format!(
                             "Expected {} arguments but got {}.",
                             closure.function.arity, arg_count
                         ),
                         closure.function.chunk.get_line(0),
-                    ));
+                    )?
                 }
 
                 self.call(closure.clone(), index);
@@ -417,10 +475,7 @@ impl Vm {
                 self.stack.push(result);
                 Ok(())
             }
-            _ => Err(Error::Runtime(
-                "Call Failed".to_string(),
-                chunk.get_line(ip),
-            )),
+            _ => Self::error("Call Failed", chunk.get_line(ip)),
         }
     }
 
