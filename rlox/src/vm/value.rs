@@ -12,6 +12,7 @@ pub enum Value {
     Number(f64),
     Nil,
     Bool(bool),
+    String(String),
     Obj(Obj),
 }
 
@@ -22,22 +23,23 @@ impl Value {
             Value::Nil => false,
             Value::Bool(n) => n == &false,
             Value::Obj(_) => false,
+            Value::String(_) => false,
         }
     }
 }
 
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Value::Number(v) => v.to_string(),
-                Value::Nil => "Nil".to_string(),
-                Value::Bool(v) => v.to_string(),
-                Value::Obj(v) => v.to_string(),
-            }
-        )
+        if let Value::String(v) = self {
+            return f.write_str(v);
+        }
+        f.write_str(&match self {
+            Value::Number(v) => v.to_string(),
+            Value::Nil => "Nil".to_string(),
+            Value::Bool(v) => v.to_string(),
+            Value::Obj(v) => v.to_string(),
+            _ => "<undefined>".to_string(),
+        })
     }
 }
 
@@ -59,6 +61,7 @@ impl Add for Value {
         match (self, rhs) {
             (Self::Number(l0), Self::Number(r0)) => Ok(Self::Number(l0 + r0)),
             (Self::Obj(l0), Self::Obj(r0)) => (l0 + r0).map(Self::Obj),
+            (Self::String(l0), Self::String(r0)) => Ok(Self::String(l0 + &r0)),
             _ => Err(Error::Arithmetic("'+' Invalid operands".into())),
         }
     }

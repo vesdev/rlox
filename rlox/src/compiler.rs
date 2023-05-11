@@ -196,7 +196,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn identifier_constant(&mut self, name: Token) -> usize {
-        self.make_constant(Value::Obj(Obj::String(name.lexeme.to_string())))
+        self.make_constant(Value::String(name.lexeme.to_string()))
     }
 
     fn identifiers_equal(a: Token, b: Token) -> bool {
@@ -859,13 +859,13 @@ fn literal(compiler: &mut Compiler, _can_assign: bool) {
 }
 
 fn string(compiler: &mut Compiler, _can_assign: bool) {
-    compiler.emit_constant(Value::Obj(Obj::String(
+    compiler.emit_constant(Value::String(
         compiler
             .previous
             .lexeme
             .trim_matches('"')
             .replace("\\n", "\n"),
-    )))
+    ))
 }
 
 fn variable(compiler: &mut Compiler, can_assign: bool) {

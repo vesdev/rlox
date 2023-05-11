@@ -12,7 +12,6 @@ use crate::error::*;
 
 #[derive(Clone)]
 pub enum Obj {
-    String(String),
     Fun(Rc<FunDescriptor>),
     Closure(Rc<Closure>),
     NativeFun(Rc<Box<dyn NativeFun>>),
@@ -32,7 +31,6 @@ impl Display for Obj {
         let s = match self {
             Obj::Fun(v) => v.to_string(),
             Obj::NativeFun(v) => v.to_string(),
-            Obj::String(v) => v.to_string(),
             Obj::Closure(v) => v.to_string(),
             Obj::Class(v) => v.borrow().to_string(),
             Obj::Instance(v) => v.borrow().to_string(),
@@ -44,10 +42,7 @@ impl Display for Obj {
 
 impl PartialEq for Obj {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::String(l0), Self::String(r0)) => l0 == r0,
-            _ => false,
-        }
+        false
     }
 }
 
@@ -55,10 +50,7 @@ impl Add for Obj {
     type Output = Result<Self>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Obj::String(l0), Obj::String(r0)) => Ok(Obj::String(l0 + &r0)),
-            _ => Err(Error::Arithmetic("'+' Invalid operands".into())),
-        }
+        Err(Error::Arithmetic("'+' Invalid operands".into()))
     }
 }
 
