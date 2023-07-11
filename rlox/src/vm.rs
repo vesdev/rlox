@@ -7,7 +7,7 @@ use crate::error::*;
 use colored::Colorize;
 use indexmap::IndexMap;
 
-use std::{cell::RefCell, cmp::min, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::vm::{
     chunk::{disassemble_instruction, Chunk},
@@ -60,7 +60,7 @@ impl Vm {
             .ok_or(Error::EmptyStack("rlox vm".to_string()))?
             .clone();
         let mut chunk = &frame.closure.function.chunk;
-        let mut exit = false;
+        let _exit = false;
 
         loop {
             let absolute_ip = frame.slot + frame.ip;
@@ -483,7 +483,7 @@ impl Vm {
         self.call(method, slot)
     }
 
-    fn call_value(&mut self, arg_count: usize, ip: usize) -> Result<(), String> {
+    fn call_value(&mut self, arg_count: usize, _ip: usize) -> Result<(), String> {
         let index = self.stack.len() - arg_count - 1;
         let callee = &self.stack[index];
 

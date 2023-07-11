@@ -41,7 +41,7 @@ impl Display for Obj {
 }
 
 impl PartialEq for Obj {
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(&self, _other: &Self) -> bool {
         false
     }
 }
@@ -49,7 +49,7 @@ impl PartialEq for Obj {
 impl Add for Obj {
     type Output = Result<Self>;
 
-    fn add(self, rhs: Self) -> Self::Output {
+    fn add(self, _rhs: Self) -> Self::Output {
         Err(Error::Arithmetic("'+' Invalid operands".into()))
     }
 }

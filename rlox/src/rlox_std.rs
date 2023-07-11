@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use crate::{
-    error::Error,
     vm::{object::NativeFun, value::Value},
 };
 
