@@ -255,7 +255,6 @@ impl<'a> Compiler<'a> {
             ));
         }
 
-        println!("unfound upvalue: {}", name.lexeme);
         None
     }
 
@@ -311,7 +310,7 @@ impl<'a> Compiler<'a> {
             return;
         }
 
-        self.emit_op(OpCode::DefineGlobal(global))
+        self.emit_op(OpCode::DefineGlobal { name: global })
     }
 
     fn argument_list(&mut self) -> usize {
@@ -380,7 +379,7 @@ impl<'a> Compiler<'a> {
         match result {
             Ok(result) => {
                 let func = self.make_constant(Value::Obj(Obj::Fun(Rc::new(result))));
-                self.emit_op(OpCode::Closure(func));
+                self.emit_op(OpCode::Closure { func });
             }
             Err(mut e) => {
                 //handle errors from nested functions recursively
@@ -391,7 +390,7 @@ impl<'a> Compiler<'a> {
 
     fn method(&mut self) {
         self.consume(TokenKind::Identifier, "Expect method name.");
-        let constant = self.identifier_constant(self.previous);
+        let name = self.identifier_constant(self.previous);
 
         self.function(if self.previous.lexeme == "init" {
             FunctionKind::Initializer
@@ -399,17 +398,17 @@ impl<'a> Compiler<'a> {
             FunctionKind::Method
         });
 
-        self.emit_op(OpCode::Method(constant));
+        self.emit_op(OpCode::Method { name });
     }
 
     fn class_declaration(&mut self) {
         self.consume(TokenKind::Identifier, "Expect class name.");
         let class_name = self.previous;
-        let name_constant = self.identifier_constant(self.previous);
+        let name = self.identifier_constant(self.previous);
         self.declare_variable();
 
-        self.emit_op(OpCode::Class(name_constant));
-        self.define_variable(name_constant);
+        self.emit_op(OpCode::Class { name });
+        self.define_variable(name);
 
         self.classes.push(ClassScope::new());
 
@@ -498,7 +497,7 @@ impl<'a> Compiler<'a> {
             self.expression();
             self.consume(TokenKind::Semicolon, "Expect ';' after loop condition.");
 
-            exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+            exit_jump = self.emit_jump(OpCode::JumpIfFalse { offset: 0 });
             condition_exists = true;
 
             self.emit_op(OpCode::Pop);
@@ -506,7 +505,7 @@ impl<'a> Compiler<'a> {
 
         //increment
         if !self.matches(TokenKind::RightParen) {
-            let body_jump = self.emit_jump(OpCode::Jump(0));
+            let body_jump = self.emit_jump(OpCode::Jump { offset: 0 });
             let increment_start = self.state().chunk().len();
 
             self.expression();
@@ -516,7 +515,7 @@ impl<'a> Compiler<'a> {
             self.emit_loop(loop_start);
 
             loop_start = increment_start;
-            self.patch_jump(body_jump, OpCode::Jump(0));
+            self.patch_jump(body_jump, OpCode::Jump { offset: 0 });
         }
 
         self.statement();
@@ -537,7 +536,7 @@ impl<'a> Compiler<'a> {
 
         //condition
         if condition_exists {
-            self.patch_jump(exit_jump, OpCode::JumpIfFalse(0));
+            self.patch_jump(exit_jump, OpCode::JumpIfFalse { offset: 0 });
             self.emit_op(OpCode::Pop);
         }
 
@@ -549,20 +548,20 @@ impl<'a> Compiler<'a> {
         self.expression();
         self.consume(TokenKind::RightParen, "Expect ')' after condition.");
 
-        let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse { offset: 0 });
         self.emit_op(OpCode::Pop);
 
         self.statement();
 
-        let else_jump = self.emit_jump(OpCode::Jump(0));
+        let else_jump = self.emit_jump(OpCode::Jump { offset: 0 });
 
-        self.patch_jump(then_jump, OpCode::JumpIfFalse(0));
+        self.patch_jump(then_jump, OpCode::JumpIfFalse { offset: 0 });
         self.emit_op(OpCode::Pop);
 
         if self.matches(TokenKind::Else) {
             self.statement();
         }
-        self.patch_jump(else_jump, OpCode::Jump(0));
+        self.patch_jump(else_jump, OpCode::Jump { offset: 0 });
     }
 
     fn print_statement(&mut self) {
@@ -595,12 +594,12 @@ impl<'a> Compiler<'a> {
         self.expression();
         self.consume(TokenKind::RightParen, "Expect ')' after condition.");
 
-        let exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse { offset: 0 });
         self.emit_op(OpCode::Pop);
         self.statement();
         self.emit_loop(loop_start);
 
-        self.patch_jump(exit_jump, OpCode::JumpIfFalse(0));
+        self.patch_jump(exit_jump, OpCode::JumpIfFalse { offset: 0 });
         self.emit_op(OpCode::Pop);
     }
 
@@ -679,7 +678,7 @@ impl<'a> Compiler<'a> {
 
     fn emit_loop(&mut self, loop_start: usize) {
         let offset = self.state().chunk().len() - loop_start;
-        self.emit_op(OpCode::Loop(offset));
+        self.emit_op(OpCode::Loop { offset });
     }
 
     fn emit_jump(&mut self, op: OpCode) -> usize {
@@ -689,7 +688,7 @@ impl<'a> Compiler<'a> {
 
     fn emit_return(&mut self) {
         if self.state().kind == FunctionKind::Initializer {
-            self.emit_op(OpCode::GetLocal(0));
+            self.emit_op(OpCode::GetLocal { local: 0 });
         } else {
             self.emit_op(OpCode::Nil);
         }
@@ -705,20 +704,22 @@ impl<'a> Compiler<'a> {
 
     fn emit_constant(&mut self, value: Value) {
         let constant = self.make_constant(value);
-        self.emit_op(OpCode::Constant(constant));
+        self.emit_op(OpCode::Constant { constant });
     }
 
     fn patch_jump(&mut self, offset: usize, op: OpCode) {
         let jump = self.state().chunk().len() - offset;
 
         match op {
-            OpCode::JumpIfFalse(_) => {
+            OpCode::JumpIfFalse { .. } => {
                 self.state()
                     .chunk()
-                    .insert_op(OpCode::JumpIfFalse(jump), offset);
+                    .insert_op(OpCode::JumpIfFalse { offset: jump }, offset);
             }
-            OpCode::Jump(_) => {
-                self.state().chunk().insert_op(OpCode::Jump(jump), offset);
+            OpCode::Jump { .. } => {
+                self.state()
+                    .chunk()
+                    .insert_op(OpCode::Jump { offset: jump }, offset);
             }
             _ => (),
         }
@@ -875,16 +876,16 @@ fn variable(compiler: &mut Compiler, can_assign: bool) {
 fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) {
     let (get_op, set_op);
 
-    if let Some(arg) = Compiler::resolve_local(compiler.state(), name) {
-        get_op = OpCode::GetLocal(arg);
-        set_op = OpCode::SetLocal(arg);
-    } else if let Some(arg) = compiler.resolve_upvalue(compiler.states.len() - 1, name) {
-        get_op = OpCode::GetUpValue(arg);
-        set_op = OpCode::SetUpValue(arg);
+    if let Some(local) = Compiler::resolve_local(compiler.state(), name) {
+        get_op = OpCode::GetLocal { local };
+        set_op = OpCode::SetLocal { local };
+    } else if let Some(upvalue) = compiler.resolve_upvalue(compiler.states.len() - 1, name) {
+        get_op = OpCode::GetUpValue { upvalue };
+        set_op = OpCode::SetUpValue { upvalue };
     } else {
-        let arg = compiler.identifier_constant(name);
-        get_op = OpCode::GetGlobal(arg);
-        set_op = OpCode::SetGlobal(arg);
+        let global = compiler.identifier_constant(name);
+        get_op = OpCode::GetGlobal { name: global };
+        set_op = OpCode::SetGlobal { name: global };
     }
 
     if can_assign && compiler.matches(TokenKind::Equal) {
@@ -896,28 +897,28 @@ fn named_variable(compiler: &mut Compiler, name: Token, can_assign: bool) {
 }
 
 fn and(compiler: &mut Compiler, _can_assign: bool) {
-    let end_jump = compiler.emit_jump(OpCode::JumpIfFalse(0));
+    let end_jump = compiler.emit_jump(OpCode::JumpIfFalse { offset: 0 });
 
     compiler.emit_op(OpCode::Pop);
     compiler.parse_precedence(Precedence::And);
 
-    compiler.patch_jump(end_jump, OpCode::JumpIfFalse(0));
+    compiler.patch_jump(end_jump, OpCode::JumpIfFalse { offset: 0 });
 }
 
 fn or(compiler: &mut Compiler, _can_assign: bool) {
-    let else_jump = compiler.emit_jump(OpCode::JumpIfFalse(0));
-    let end_jump = compiler.emit_jump(OpCode::Jump(0));
+    let else_jump = compiler.emit_jump(OpCode::JumpIfFalse { offset: 0 });
+    let end_jump = compiler.emit_jump(OpCode::Jump { offset: 0 });
 
-    compiler.patch_jump(else_jump, OpCode::JumpIfFalse(0));
+    compiler.patch_jump(else_jump, OpCode::JumpIfFalse { offset: 0 });
     compiler.emit_op(OpCode::Pop);
 
     compiler.parse_precedence(Precedence::Or);
-    compiler.patch_jump(end_jump, OpCode::Jump(0));
+    compiler.patch_jump(end_jump, OpCode::Jump { offset: 0 });
 }
 
 fn call(compiler: &mut Compiler, _can_assign: bool) {
     let arg_count = compiler.argument_list();
-    compiler.emit_op(OpCode::Call(arg_count))
+    compiler.emit_op(OpCode::Call { arg_count })
 }
 
 fn dot(compiler: &mut Compiler, can_assign: bool) {
@@ -926,12 +927,15 @@ fn dot(compiler: &mut Compiler, can_assign: bool) {
 
     if can_assign && compiler.matches(TokenKind::Equal) {
         compiler.expression();
-        compiler.emit_op(OpCode::SetProperty(name));
+        compiler.emit_op(OpCode::SetProperty { prop_name: name });
     } else if compiler.matches(TokenKind::LeftParen) {
         let arg_count = compiler.argument_list();
-        compiler.emit_op(OpCode::Invoke(name, arg_count));
+        compiler.emit_op(OpCode::Invoke {
+            method: name,
+            arg_count,
+        });
     } else {
-        compiler.emit_op(OpCode::GetProperty(name));
+        compiler.emit_op(OpCode::GetProperty { prop_name: name });
     }
 }
 
@@ -967,14 +971,17 @@ fn super_(compiler: &mut Compiler, _can_assign: bool) {
             Token::new(TokenKind::Super, "super", compiler.previous.line),
             false,
         );
-        compiler.emit_op(OpCode::SuperInvoke(name, arg_count));
+        compiler.emit_op(OpCode::SuperInvoke {
+            method: name,
+            arg_count,
+        });
     } else {
         named_variable(
             compiler,
             Token::new(TokenKind::Super, "super", compiler.previous.line),
             false,
         );
-        compiler.emit_op(OpCode::GetSuper(name));
+        compiler.emit_op(OpCode::GetSuper { name });
     }
 }
 

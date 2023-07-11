@@ -10,7 +10,7 @@
   outputs = {nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];inlay
+        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
@@ -18,16 +18,14 @@
       with pkgs;
       {
         devShells.default = mkShell {
-          buildInputs = [
+          nativeBuildInputs = [
             (rust-bin.stable.latest.default.override {
               extensions = [ "rust-src" "rust-analyzer" ];
             })
-            cargo
             pkg-config
             openssl
           ];
         };
-        formatter.x86_64-linux = legacyPackages.${system}.nixpkgs-fmt;
       }
     );
 
